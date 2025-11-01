@@ -1,6 +1,6 @@
 {
   "name": "crypto-intel-desktop",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Crypto Intel Desktop",
   "main": "main.js",
   "author": "You",
@@ -19,7 +19,7 @@
     "electron-log": "^5.1.4"
   },
   "build": {
-    "appId": "com.yourcompany.crypto-intel",
+    "appId": "com.crypto.intel.desktop",
     "productName": "Crypto Intel",
     "asar": true,
     "win": {
