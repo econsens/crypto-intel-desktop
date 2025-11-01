@@ -1,0 +1,23 @@
+# node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# build artifacts
+dist/
+win-unpacked/
+*.exe
+*.blockmap
+latest.yml
+
+# editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# python (if any)
+__pycache__/
+*.pyc
+.venv/
+venv/

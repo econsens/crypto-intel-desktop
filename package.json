@@ -1,0 +1,57 @@
+{
+  "name": "crypto-intel-desktop",
+  "version": "1.0.0",
+  "description": "Crypto Intel Desktop — Live crypto insights and alert app with Electron + Python backend.",
+  "main": "main.js",
+  "author": "econsens",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "release": "electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.3",
+    "electron-updater": "^6.1.8"
+  },
+  "devDependencies": {
+    "electron": "^29.4.6",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.crypto.intel.desktop",
+    "productName": "Crypto Intel",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "docker.js",
+      "renderer.css",
+      "assets/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "econsens",
+        "repo": "crypto-intel-desktop",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "artifactName": "Crypto-Intel-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

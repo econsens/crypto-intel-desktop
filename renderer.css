@@ -1,0 +1,8 @@
+:root{
+  --track:#0a0f1a; --thumb:#2a3342; --thumbh:#3a4558;
+}
+* { scrollbar-width: thin; scrollbar-color: var(--thumb) var(--track); }
+::-webkit-scrollbar{ width:10px; height:10px }
+::-webkit-scrollbar-track{ background:var(--track) }
+::-webkit-scrollbar-thumb{ background:var(--thumb); border-radius:8px; border:2px solid var(--track) }
+::-webkit-scrollbar-thumb:hover{ background:var(--thumbh) }
