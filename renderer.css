@@ -1,8 +1,130 @@
+/* electron/renderer.css */
+/* Discord-ish terminal dark theme */
+
 :root{
-  --track:#0a0f1a; --thumb:#2a3342; --thumbh:#3a4558;
+  --bg: #0b1220;
+  --bg-soft: #0f172a;
+  --bg-softer: #111a2e;
+  --muted: #9aa3b2;
+  --text: #e5e7eb;
+  --glow: #00e5ff;
+  --good: #10b981;
+  --bad: #ef4444;
+  --accent: #3b82f6;
+  --border: rgba(255,255,255,0.08);
 }
-* { scrollbar-width: thin; scrollbar-color: var(--thumb) var(--track); }
-::-webkit-scrollbar{ width:10px; height:10px }
-::-webkit-scrollbar-track{ background:var(--track) }
-::-webkit-scrollbar-thumb{ background:var(--thumb); border-radius:8px; border:2px solid var(--track) }
-::-webkit-scrollbar-thumb:hover{ background:var(--thumbh) }
+
+*{ box-sizing: border-box; }
+
+html, body{
+  margin:0; padding:0; height:100%; width:100%;
+  color:var(--text); background:var(--bg);
+  font: 14px/1.45 "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+}
+
+/* Top bar */
+.ci-topbar{
+  height: 44px;
+  display:flex; align-items:center; justify-content:space-between;
+  background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0));
+  border-bottom: 1px solid var(--border);
+  padding: 0 12px;
+}
+.top-left{ display:flex; align-items:center; gap:10px; }
+.brand{ display:flex; align-items:center; gap:10px; }
+.brand-dot{
+  width: 12px; height: 12px; border-radius: 50%;
+  background: radial-gradient(circle, var(--glow), #007c91);
+  box-shadow: 0 0 10px var(--glow);
+}
+.brand-name{
+  font-weight: 700; letter-spacing: .2px; color:#dbeafe;
+}
+.pill{
+  border: 1px solid var(--border);
+  background: var(--bg-softer);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #bfeeff;
+}
+.status{ display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+.status-dot{
+  width:10px; height:10px; border-radius:50%;
+  background: #777;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.status-dot.ok{ background: var(--good); box-shadow: 0 0 8px var(--good); }
+.status-dot.bad{ background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+
+/* Layout */
+.ci-layout{
+  display:grid; grid-template-columns: 78px 1fr;
+  grid-auto-rows: 1fr;
+  height: calc(100vh - 44px - 38px);
+}
+
+/* Left side = Discord rail + labels */
+.ci-side{
+  display:grid; grid-template-columns: 78px 1fr;
+  background: var(--bg-soft);
+  border-right:1px solid var(--border);
+}
+.rail{
+  padding:10px 8px; display:flex; flex-direction:column; gap:10px; align-items:center;
+  background: var(--bg-softer);
+}
+.rail-spacer{ flex:1 1 auto; }
+.rail-btn{
+  background: transparent; border:none; cursor:pointer; outline:none;
+  width: 48px; height: 48px; border-radius: 16px;
+  transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+  display:flex; align-items:center; justify-content:center;
+}
+.rail-btn:hover{ transform: translateY(-1px); background: rgba(255,255,255,0.06); }
+.rail-btn.active{ background: rgba(59,130,246,0.22); box-shadow: 0 0 10px rgba(59,130,246,0.35) inset; }
+.rail-dot{
+  width: 36px; height: 36px; border-radius: 12px;
+  background: #101a33; border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center;
+  color:#bcd7ff; font-weight:700;
+  text-shadow: 0 0 10px rgba(59,130,246,0.35);
+}
+
+/* Label list */
+.nav-list{ padding:10px; display:flex; flex-direction:column; gap:6px; border-left:1px solid var(--border); }
+.nav-item{
+  width: 195px; text-align:left;
+  background: transparent; color: var(--text);
+  border: 1px solid transparent; border-radius: 10px;
+  padding: 10px 12px; cursor:pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.nav-item:hover{ background: rgba(255,255,255,0.04); border-color: var(--border); }
+.nav-item.active{
+  background: rgba(59,130,246,0.10);
+  border-color: rgba(59,130,246,0.25);
+  color:#cfe2ff;
+}
+.nav-divider{
+  height:1px; background: var(--border); margin:6px 0;
+}
+
+/* Main/center area */
+.ci-main{
+  background: var(--bg);
+}
+
+/* Bottom ticker */
+.ci-bottom{
+  height: 38px; display:flex; align-items:center; padding: 0 12px;
+  border-top:1px solid var(--border);
+  background: var(--bg-soft);
+  color:#bcd7ff; font-size:13px;
+}
+.ticker{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity:.9; }
+
+/* Scrollbars */
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.12); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover{ background: rgba(255,255,255,0.18); }
