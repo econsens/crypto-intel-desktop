@@ -1,0 +1,52 @@
+{
+  "name": "crypto-intel-desktop",
+  "version": "1.0.4",
+  "description": "Crypto Intel Desktop",
+  "main": "main.js",
+  "author": "You",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "release": "electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.4"
+  },
+  "devDependencies": {
+    "electron": "29.4.6",
+    "electron-builder": "^24.13.3",
+    "electron-log": "^5.1.4"
+  },
+  "build": {
+    "appId": "com.crypto.intel.desktop",
+    "productName": "Crypto Intel",
+    "asar": true,
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Crypto Intel"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "econsens",
+        "repo": "crypto-intel-desktop",
+        "releaseType": "release",
+        "vPrefixedTagName": true
+      }
+    ],
+    "releaseInfo": {
+      "releaseName": "Crypto Intel Desktop v${version}"
+    }
+  }
+}
