@@ -1,0 +1,21 @@
+# ---- Core Web Framework ----
+fastapi==0.115.0
+uvicorn==0.30.1
+httpx==0.27.0
+feedparser==6.0.11
+
+# ---- Machine Learning / AI ----
+torch==2.3.1
+torchvision==0.18.1
+torchaudio==2.3.1
+transformers==4.44.2
+sentence-transformers==2.2.2
+scikit-learn==1.5.1
+pandas==2.2.2
+numpy==1.26.4
+
+# ---- Utilities ----
+python-dateutil==2.9.0.post0
+faiss-cpu==1.8.0
+joblib==1.4.2
+tqdm==4.66.5

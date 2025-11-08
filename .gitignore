@@ -1,0 +1,33 @@
+# OS/Editor cruft
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+
+# App runtime & data
+data/
+!data/.gitkeep   # keep folder, not contents
+*.db
+*.sqlite
+
+# HF / model caches (both inside and outside data if any)
+models/
+data/models/
+data/memory/
+
+# Electron build cache/backups
+electron_backup/
+
+# Node modules if you ever add a frontend build
+node_modules/
+
+# Logs
+*.log

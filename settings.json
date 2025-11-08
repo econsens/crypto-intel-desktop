@@ -1,0 +1,5 @@
+{
+  "python.defaultInterpreterPath": "C:\\crypto-intel-mini\\.venv\\Scripts\\python.exe",
+  "python.analysis.diagnosticMode": "workspace",
+  "python.analysis.indexing": true
+}
