@@ -1178,6 +1178,152 @@ def on_start():
 # =============================================================================
 # API endpoints
 # =============================================================================
+
+# ===== Phase 3.2: Learning + Strategy endpoints =====
+import glob
+
+LEARNING_LOG_PATH = os.path.join(DB_DIR, "learning_log.json")
+
+def read_latest_learning() -> dict:
+    """Return the latest learning entry from data/learning_log.json, or {}."""
+    try:
+        with open(LEARNING_LOG_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        if not rows:
+            return {}
+        # sort by ts descending just in case
+        rows.sort(key=lambda r: r.get("ts",""), reverse=True)
+        return rows[0]
+    except Exception:
+        return {}
+
+@app.get("/learning/latest")
+def learning_latest_api():
+    return read_latest_learning()
+
+@app.get("/strategy/signals")
+def strategy_signals(window_hours: int = 24):
+    """
+    Simple rules engine:
+      - Start from current predictions (direction, score, sample_size)
+      - Boost confidence if model R^2 good
+      - Boost if latest learning accuracy >= 0.55
+      - Require sample_size >= 6 for stronger signals
+    """
+    now = datetime.now(timezone.utc)
+    # 1) get current predictions (reuse predictions_api logic without logging)
+    import numpy as np
+    import pandas as pd
+
+    since = (now - timedelta(hours=window_hours)).isoformat()
+    out = []
+
+    latest_learning = read_latest_learning()
+    recent_acc = float(latest_learning.get("acc", 0.0))
+
+    with sqlite3.connect(DB_PATH) as db:
+        for full in TICKER_SYMBOLS:
+            coin = full.replace("USDT", "")
+            rows = db.execute(
+                "SELECT ts, score FROM sentiments WHERE coin=? AND ts>=? ORDER BY ts ASC",
+                (coin, since),
+            ).fetchall()
+            sample = len(rows)
+
+            if rows:
+                df = pd.DataFrame(rows, columns=["ts", "score"]).set_index("ts")
+                df.index = pd.to_datetime(df.index)
+                df = df.resample("1h").mean().fillna(0.0)
+                ema6 = float(df["score"].ewm(span=6, adjust=False).mean().iloc[-1])
+                ema24 = float(df["score"].ewm(span=24, adjust=False).mean().iloc[-1])
+                cnt_val = int((df["score"] != 0).astype(int).rolling(24, min_periods=1).sum().iloc[-1])
+            else:
+                ema6 = ema24 = 0.0
+                cnt_val = 0
+
+            # try model
+            model_r2 = None
+            pred_val = None
+            direction = "up"
+            conf_rank = "low"
+
+            meta = db.execute(
+                "SELECT trained_at, horizon_hours, n_samples, r2, path FROM models WHERE coin=?",
+                (coin,),
+            ).fetchone()
+
+            if meta:
+                _, _, n_samples, r2, mdl_path = meta
+                model_r2 = r2
+                try:
+                    with open(mdl_path, "rb") as f:
+                        mdl = pickle.load(f)
+                    x = np.array([[ema6, ema24, cnt_val]])
+                    yhat = float(mdl.predict(x)[0])
+                    pred_val = yhat
+                    direction = "up" if yhat >= 0 else "down"
+                except Exception:
+                    pred_val = None
+
+            if pred_val is None:
+                s = 0.6 * ema6 + 0.4 * ema24
+                direction = "up" if s >= 0 else "down"
+                pred_val = s * 0.02
+
+            # base confidence by magnitude
+            mag = abs(pred_val)
+            if mag > 0.025 and sample >= 6:
+                conf_rank = "med"
+            elif mag > 0.010:
+                conf_rank = "low"
+            else:
+                conf_rank = "low"
+
+            # simple rule boosts:
+            reasons = []
+            score_adj = pred_val
+
+            if model_r2 is not None and model_r2 >= 0.10:
+                reasons.append(f"model_r2={model_r2:.2f} OK")
+                score_adj *= 1.20  # +20%
+
+            if recent_acc >= 0.55:
+                reasons.append(f"recent_acc={recent_acc:.2f} OK")
+                score_adj *= 1.15  # +15%
+
+            # require min sources for stronger action
+            action = "HOLD"
+            if sample >= 6 and abs(score_adj) >= 0.02:
+                action = "BUY" if direction == "up" else "SELL"
+            elif abs(score_adj) < 0.01:
+                action = "HOLD"
+
+            reasons.append(f"sources={sample}")
+            reasons.append(f"score={pred_val:+.3f}→{score_adj:+.3f}")
+
+            out.append({
+                "symbol": coin,
+                "action": action,
+                "direction": direction,
+                "score": round(score_adj, 3),
+                "confidence": "high" if "model_r2" in " ".join(reasons) and recent_acc >= 0.55 else "med" if sample >= 6 else "low",
+                "sample_size": sample,
+                "model_r2": model_r2,
+                "recent_acc": recent_acc,
+                "reasons": reasons
+            })
+
+    # sort: strongest first
+    order = {"BUY": 2, "SELL": 1, "HOLD": 0}
+    out.sort(key=lambda d: (order[d["action"]], abs(d["score"])), reverse=True)
+
+    return {
+        "asof": now.isoformat(),
+        "window_hours": window_hours,
+        "signals": out
+    }
+# ===== end Phase 3.2 block =====
+
 @app.get("/prices")
 def prices_api():
     return JSONResponse(PRICES)
