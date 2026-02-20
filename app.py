@@ -1234,7 +1234,7 @@ def home():
     alerts_month = db_get_alerts_between(w["month"], w["now"])
     alerts_year = db_get_alerts_between(w["year"], w["now"])
     news = db_get_news(30)
-    preds = load_predictions()
+    preds = predictions_api(window_hours=48)
 
     def render_alerts(items: List[dict]) -> str:
         if not items:
@@ -1351,6 +1351,7 @@ def home():
     .score{ font-weight:700 }
     .title{ font-weight:600 }
     .meta{ font-size:12px; opacity:.8; margin-top:4px }
+    .muted{ color:var(--muted); font-size:13px }
     .reasons{ font-size:12px; opacity:.82; margin-top:4px }
     .link{ color:var(--link) }
     .tabs{ display:flex; gap:8px; margin:4px 0 8px 0 }
@@ -1412,6 +1413,74 @@ def home():
       }));
     }
 
+    function renderPredictionsCards(preds){
+      const mount = document.getElementById('predictions-list');
+      if(!mount) return;
+      if(!preds || preds.length===0){
+        mount.innerHTML = '<div class="muted">No predictions yet — gathering data…</div>';
+        return;
+      }
+      let html = '';
+      for(const c of preds){
+        const base = c.symbol;
+        const meta = COIN_META[base] || {icon: base[0], color:'#444'};
+        const arrow = c.direction === 'up' ? '⬆️' : '⬇️';
+        const conf = (c.confidence || 'low');
+        const score = (c.score>=0?'+':'') + Number(c.score||0).toFixed(4);
+        const prob = Math.round((c.probability_up||0.5)*100);
+        const move = (c.expected_move_pct>=0?'+':'') + Number(c.expected_move_pct||0).toFixed(2) + '%';
+        const reasons = (c.reason_codes||[]).slice(0,3).join(' • ');
+        html += `
+          <div class="card pred">
+            <div class="row" style="justify-content:space-between">
+              <div class="row" style="gap:10px">
+                <div class="avatar" style="background:${meta.color}">${meta.icon}</div>
+                <div class="title">${base} ${arrow}</div>
+              </div>
+              <div class="conf ${conf}">${conf.toUpperCase()}</div>
+            </div>
+            <div class="meta">Expected move: <b>${move}</b> • P(up): <b>${prob}%</b></div>
+            <div class="meta">Score: <b>${score}</b> • Sources: ${c.sample_size||0}</div>
+            <div class="reasons">${reasons || 'model inference'}</div>
+          </div>`;
+      }
+      mount.innerHTML = html;
+    }
+
+    function renderModelQuality(rows){
+      const mount = document.getElementById('model-quality');
+      if(!mount) return;
+      if(!rows || rows.length===0){
+        mount.innerHTML = '<div class="muted">No model evaluation rows yet.</div>';
+        return;
+      }
+      const top = rows.slice(0,8);
+      let html = '';
+      for(const r of top){
+        const acc = (Number(r.direction_acc||0)*100).toFixed(1);
+        const base = (Number(r.baseline_acc||0)*100).toFixed(1);
+        const mae = Number(r.mae||0).toFixed(4);
+        html += `<div class="meta" style="margin-bottom:6px"><b>${r.coin}</b> • Acc ${acc}% (base ${base}%) • MAE ${mae}</div>`;
+      }
+      mount.innerHTML = html;
+    }
+
+    function renderInsights(preds){
+      const mount = document.getElementById('prediction-insights');
+      if(!mount) return;
+      if(!preds || preds.length===0){
+        mount.innerHTML = '<div class="muted">Waiting for predictions…</div>';
+        return;
+      }
+      const top = preds[0];
+      const reasons = (top.reason_codes || []).map(r=>`<li>${r}</li>`).join('');
+      mount.innerHTML = `
+        <div class="meta"><b>${top.symbol}</b> ${top.direction==='up'?'⬆️':'⬇️'} • confidence ${(top.confidence||'low').toUpperCase()}</div>
+        <div class="meta">Expected move: <b>${Number(top.expected_move_pct||0).toFixed(2)}%</b></div>
+        <div class="meta">P(up): <b>${Math.round((top.probability_up||0.5)*100)}%</b></div>
+        <ul style="margin:8px 0 0 16px; padding:0">${reasons || '<li>No reason codes.</li>'}</ul>`;
+    }
+
     async function fetchPrices(){
       try{
         const r = await fetch('/prices', {cache:'no-store'});
@@ -1419,10 +1488,33 @@ def home():
       }catch(e){}
     }
 
+    async function fetchPredictions(){
+      try{
+        const r = await fetch('/predictions?window_hours=72', {cache:'no-store'});
+        const payload = await r.json();
+        document.getElementById('model-version').textContent = payload.model_version || 'n/a';
+        document.getElementById('pred-updated').textContent = new Date().toLocaleTimeString();
+        renderPredictionsCards(payload.coins || []);
+        renderInsights(payload.coins || []);
+      }catch(e){}
+    }
+
+    async function fetchModelQuality(){
+      try{
+        const r = await fetch('/debug/model-quality?limit=40', {cache:'no-store'});
+        const rows = await r.json();
+        renderModelQuality(rows || []);
+      }catch(e){}
+    }
+
     window.addEventListener('DOMContentLoaded', ()=>{
       wireTabs();
       fetchPrices();
+      fetchPredictions();
+      fetchModelQuality();
       setInterval(fetchPrices, 12000);
+      setInterval(fetchPredictions, 30000);
+      setInterval(fetchModelQuality, 120000);
     });
   </script>
 </head>
@@ -1443,15 +1535,28 @@ def home():
       __NEWS_HTML__
 
       <h2 id="predictions" class="h2" style="margin-top:18px">📈 Predictions</h2>
-      __PREDS_HTML__
+      <div id="predictions-list">__PREDS_HTML__</div>
     </div>
 
     <div class="right">
-      <h3>Status</h3>
-      <div style="opacity:.8">Local only (127.0.0.1)</div>
-      <div style="opacity:.8">Updates every 5 minutes</div>
-      <div style="opacity:.8">Feeds: __FEEDS_COUNT__</div>
-      <div style="opacity:.8">Version: __APP_VERSION__</div>
+      <h3>AI Status</h3>
+      <div class="card alt" style="margin-top:8px">
+        <div class="meta">Local endpoint: <b>127.0.0.1:8000</b></div>
+        <div class="meta">Feeds: <b>__FEEDS_COUNT__</b></div>
+        <div class="meta">Model version: <b id="model-version">__MODEL_VERSION__</b></div>
+        <div class="meta">Updated: <b id="pred-updated">initial</b></div>
+      </div>
+
+      <h3 style="margin-top:14px">Model quality (recent)</h3>
+      <div id="model-quality" class="card alt">
+        <div class="muted">Loading model metrics…</div>
+      </div>
+
+      <h3 style="margin-top:14px">Top prediction details</h3>
+      <div id="prediction-insights" class="card alt">
+        <div class="muted">Waiting for predictions…</div>
+      </div>
+
       <div class="footer">
         <div class="ticker"><div id="ticker-track" class="track"></div></div>
       </div>
@@ -1467,6 +1572,7 @@ def home():
         .replace("__FEEDS_COUNT__", str(len(FEEDS)))
         .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
         .replace("__COIN_META__", json.dumps(COIN_META))
+        .replace("__MODEL_VERSION__", MODEL_VERSION)
     )
     return HTMLResponse(html)
 
