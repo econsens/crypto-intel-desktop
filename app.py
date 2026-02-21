@@ -1364,6 +1364,9 @@ def home():
     .title{ font-weight:600 }
     .meta{ font-size:12px; opacity:.8; margin-top:4px }
     .muted{ color:var(--muted); font-size:13px }
+    .status-dot{ display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; background:#6b7280; vertical-align:middle }
+    .status-dot.ok{ background:#22c55e }
+    .status-dot.bad{ background:#ef4444 }
     .reasons{ font-size:12px; opacity:.82; margin-top:4px }
     .link{ color:var(--link) }
     .tabs{ display:flex; gap:8px; margin:4px 0 8px 0 }
@@ -1466,7 +1469,15 @@ def home():
         mount.innerHTML = '<div class="muted">No model evaluation rows yet.</div>';
         return;
       }
-      const top = rows.slice(0,8);
+      const seen = new Set();
+      const top = [];
+      for(const r of rows){
+        if(!r || !r.coin) continue;
+        if(seen.has(r.coin)) continue;
+        seen.add(r.coin);
+        top.push(r);
+        if(top.length >= 8) break;
+      }
       let html = '';
       for(const r of top){
         const acc = (Number(r.direction_acc||0)*100).toFixed(1);
@@ -1474,7 +1485,7 @@ def home():
         const mae = Number(r.mae||0).toFixed(4);
         html += `<div class="meta" style="margin-bottom:6px"><b>${r.coin}</b> • Acc ${acc}% (base ${base}%) • MAE ${mae}</div>`;
       }
-      mount.innerHTML = html;
+      mount.innerHTML = html || '<div class="muted">No model evaluation rows yet.</div>';
     }
 
     function renderInsights(preds){
@@ -1516,6 +1527,8 @@ def home():
         const r = await fetch('/debug/model-quality?limit=40', {cache:'no-store'});
         const rows = await r.json();
         renderModelQuality(rows || []);
+        const q = document.getElementById('quality-updated');
+        if(q) q.textContent = new Date().toLocaleTimeString();
       }catch(e){}
     }
 
@@ -1532,16 +1545,39 @@ def home():
       }catch(e){}
     }
 
+    async function fetchHealth(){
+      const dot = document.getElementById('health-dot');
+      const txt = document.getElementById('health-text');
+      try{
+        const r = await fetch('/health', {cache:'no-store'});
+        const payload = await r.json();
+        const ok = !!(payload && payload.ok);
+        if(dot){
+          dot.classList.remove('ok','bad');
+          dot.classList.add(ok ? 'ok' : 'bad');
+        }
+        if(txt) txt.textContent = ok ? 'healthy' : 'unhealthy';
+      }catch(e){
+        if(dot){
+          dot.classList.remove('ok');
+          dot.classList.add('bad');
+        }
+        if(txt) txt.textContent = 'offline';
+      }
+    }
+
     window.addEventListener('DOMContentLoaded', ()=>{
       wireTabs();
       fetchPrices();
       fetchPredictions();
       fetchModelQuality();
       fetchRuntime();
+      fetchHealth();
       setInterval(fetchPrices, 12000);
       setInterval(fetchPredictions, 30000);
       setInterval(fetchModelQuality, 120000);
       setInterval(fetchRuntime, 60000);
+      setInterval(fetchHealth, 30000);
     });
   </script>
 </head>
@@ -1573,7 +1609,9 @@ def home():
         <div class="meta">Model version: <b id="model-version">__MODEL_VERSION__</b></div>
         <div class="meta">App version: <b id="app-version">__APP_VERSION__</b></div>
         <div class="meta">Backend started: <b id="backend-started">unknown</b></div>
-        <div class="meta">Updated: <b id="pred-updated">initial</b></div>
+        <div class="meta">Predictions updated: <b id="pred-updated">initial</b></div>
+        <div class="meta">Model quality updated: <b id="quality-updated">initial</b></div>
+        <div class="meta"><span id="health-dot" class="status-dot"></span>Backend health: <b id="health-text">checking…</b></div>
       </div>
 
       <h3 style="margin-top:14px">Model quality (recent)</h3>
@@ -1601,7 +1639,7 @@ def home():
         .replace("__FEEDS_COUNT__", str(len(FEEDS)))
         .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
         .replace("__COIN_META__", json.dumps(COIN_META))
-                .replace("__MODEL_VERSION__", MODEL_VERSION)
+        .replace("__MODEL_VERSION__", MODEL_VERSION)
         .replace("__APP_VERSION__", VERSION)
     )
     return HTMLResponse(html)
