@@ -58,12 +58,9 @@ from datetime import datetime, timezone, timedelta
 from dateutil import parser as dtparser
 import pickle
 import math
+from pathlib import Path
 VERSION = "1.1.0"
-<<<<<<< HEAD
 MODEL_VERSION = "2.1.0"
-=======
-MODEL_VERSION = "2.0.0"
->>>>>>> origin/main
 STARTED_AT = datetime.now(timezone.utc).isoformat()
 
 # =============================================================================
@@ -93,6 +90,12 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 MEM_DIR = os.path.join(DB_DIR, "memory")
 os.makedirs(MEM_DIR, exist_ok=True)
+
+TEMPLATE_PATH = Path(__file__).resolve().parent / "assets" / "dashboard_template.html"
+
+MEMORY_MODEL = os.getenv("MEMORY_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+MEMORY_LOCAL_ONLY = os.getenv("MEMORY_LOCAL_ONLY", "1") == "1"
+MEMORY_ALLOW_DOWNLOAD = os.getenv("MEMORY_ALLOW_DOWNLOAD", "0") == "1"
 
 BINANCE = "https://api.binance.com"
 
@@ -238,7 +241,6 @@ def db_init() -> None:
             baseline_acc REAL
         )""")
 
-<<<<<<< HEAD
         # horizon-specific model metadata (phase upgrade)
         db.execute("""CREATE TABLE IF NOT EXISTS models_horizon(
             coin TEXT,
@@ -250,8 +252,6 @@ def db_init() -> None:
             PRIMARY KEY (coin, horizon_hours)
         )""")
 
-=======
->>>>>>> origin/main
 
 def save_metric(kind: str, ts: str, coin: str, payload: dict) -> None:
     """Insert one metric row; errors are swallowed."""
@@ -546,7 +546,6 @@ def parse_iso(ts: str) -> datetime:
     return dtparser.parse(ts).astimezone(timezone.utc)
 
 
-<<<<<<< HEAD
 def source_key(url: str) -> str:
     try:
         host = httpx.URL(url).host or ""
@@ -596,8 +595,34 @@ def estimate_novelty(title: str) -> float:
         return 0.50
 
 
-=======
->>>>>>> origin/main
+def init_memory() -> None:
+    """Best-effort semantic memory init; never block app startup on network downloads."""
+    global MEM
+    if MemoryIndex is None:
+        print("[Memory] package not available; skipping.")
+        return
+
+    try:
+        # IMPORTANT: base_dir must be the root data folder (/data), not /data/memory.
+        # MemoryIndex derives both /data/crypto.db and /data/memory/* paths from this.
+        MEM = MemoryIndex(base_dir=DB_DIR)
+        if MEMORY_LOCAL_ONLY:
+            MEM.start(model_name=MEMORY_MODEL, local_files_only=True)
+            print("[Memory] semantic index ready (local model cache).")
+            return
+        if MEMORY_ALLOW_DOWNLOAD:
+            MEM.start(model_name=MEMORY_MODEL, local_files_only=False)
+            print("[Memory] semantic index ready (download enabled).")
+            return
+
+        # Default: safe startup policy. Try local cache only and keep app running if absent.
+        MEM.start(model_name=MEMORY_MODEL, local_files_only=True)
+        print("[Memory] semantic index ready (default local-only mode).")
+    except Exception as e:
+        MEM = None
+        print("[Memory] disabled:", e)
+
+
 def current_price(symbol: str) -> Optional[float]:
     snap = PRICES.get(symbol)
     if snap:
@@ -639,7 +664,6 @@ def event_price_at_or_near(symbol: str, target_ts: datetime) -> Optional[float]:
         return None
 
 
-<<<<<<< HEAD
 def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, source_url: str) -> dict:
     f = sentiment_keywords(title)
     now_price = current_price(f"{coin}USDT") or 0.0
@@ -654,24 +678,12 @@ def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, sou
     expected = max(-0.08, min(0.08, base * 0.04))
     prob_up = logistic(base * 2.4)
     confidence = min(0.98, max(0.05, abs(base) + 0.15 * src_rel))
-=======
-def build_event_prediction(coin: str, sentiment: float, title: str, ts: str) -> dict:
-    f = sentiment_keywords(title)
-    now_price = current_price(f"{coin}USDT") or 0.0
-    base = 0.65 * sentiment + 0.35 * f["topic_bias"]
-    expected = max(-0.08, min(0.08, base * 0.04))
-    prob_up = logistic(base * 2.2)
-    confidence = min(0.98, max(0.05, abs(base)))
->>>>>>> origin/main
     reasons = [
         f"sentiment={sentiment:+.3f}",
         f"topic_bias={f['topic_bias']:+.3f}",
         f"keyword_hits={int(f['keyword_hits'])}",
-<<<<<<< HEAD
         f"source_rel={src_rel:.2f}",
         f"novelty={novelty:.2f}",
-=======
->>>>>>> origin/main
         f"price_snapshot={now_price:.2f}",
     ]
     return {
@@ -686,17 +698,13 @@ def build_event_prediction(coin: str, sentiment: float, title: str, ts: str) -> 
             "sentiment": sentiment,
             "topic_bias": f["topic_bias"],
             "keyword_hits": f["keyword_hits"],
-<<<<<<< HEAD
             "source_reliability": src_rel,
             "novelty": novelty,
-=======
->>>>>>> origin/main
             "price_snapshot": now_price,
         },
     }
 
 
-<<<<<<< HEAD
 def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, float]) -> Optional[float]:
     try:
         with sqlite3.connect(DB_PATH) as db:
@@ -723,8 +731,6 @@ def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, f
     return None
 
 
-=======
->>>>>>> origin/main
 # =============================================================================
 # Binance helpers
 # =============================================================================
@@ -793,11 +799,7 @@ def rss_loop():
                         )
 
                         event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
-<<<<<<< HEAD
                         pred = build_event_prediction(coin, sent, n["title"], n["ts"], n["url"])
-=======
-                        pred = build_event_prediction(coin, sent, n["title"], n["ts"])
->>>>>>> origin/main
                         db_upsert_event(
                             {
                                 "id": event_id,
@@ -807,16 +809,11 @@ def rss_loop():
                                 "title": n["title"],
                                 "source_url": n["url"],
                                 "sentiment": sent,
-<<<<<<< HEAD
                                 "novelty": pred["feature_map"].get("novelty", 0.5),
-=======
-                                "novelty": 1.0,
->>>>>>> origin/main
                                 "features": pred["feature_map"],
                             }
                         )
                         for h in EVENT_HORIZONS:
-<<<<<<< HEAD
                             expected_h = predict_horizon_expected(
                                 coin,
                                 h,
@@ -833,27 +830,17 @@ def rss_loop():
                             )
                             expected_h = expected_h if expected_h is not None else pred["expected_return"] * (h / 24.0)
                             prob_up_h = logistic(expected_h * 35.0)
-=======
->>>>>>> origin/main
                             db_upsert_event_prediction(
                                 {
                                     "event_id": event_id,
                                     "horizon_h": h,
                                     "ts": n["ts"],
                                     "model_version": MODEL_VERSION,
-<<<<<<< HEAD
                                     "direction": "up" if expected_h >= 0 else "down",
                                     "expected_return": expected_h,
                                     "probability_up": prob_up_h,
                                     "confidence": pred["confidence"],
                                     "reasons": pred["reasons"] + [f"horizon={h}h"],
-=======
-                                    "direction": pred["direction"],
-                                    "expected_return": pred["expected_return"] * (h / 24.0),
-                                    "probability_up": pred["probability_up"],
-                                    "confidence": pred["confidence"],
-                                    "reasons": pred["reasons"],
->>>>>>> origin/main
                                 }
                             )
 
@@ -876,13 +863,8 @@ def alert_generation_loop() -> None:
             with sqlite3.connect(DB_PATH) as db:
                 rows = db.execute(
                     """
-<<<<<<< HEAD
                     SELECT e.id, e.title, e.source_url, e.coin, e.ts, e.features,
                            p.expected_return, p.probability_up, p.confidence, p.reasons
-=======
-                    SELECT e.id, e.title, e.source_url, e.coin, e.ts,
-                           p.expected_return, p.confidence, p.reasons
->>>>>>> origin/main
                     FROM events e
                     JOIN event_predictions p ON p.event_id = e.id
                     WHERE p.horizon_h = 24
@@ -891,7 +873,6 @@ def alert_generation_loop() -> None:
                     """
                 ).fetchall()
 
-<<<<<<< HEAD
             for eid, title, url, coin, ts, features_json, expected_ret, prob_up, conf, reasons_json in rows:
                 feat = {}
                 try:
@@ -904,24 +885,16 @@ def alert_generation_loop() -> None:
                 score = float(expected_ret) * (6.0 + 4.0 * conf) * (0.6 + 0.4 * src_rel) * (0.7 + 0.6 * novelty)
                 confidence_val = conf * conviction
                 confidence = "High" if confidence_val >= 0.60 else "Med" if confidence_val >= 0.35 else "Low"
-=======
-            for eid, title, url, coin, ts, expected_ret, conf, reasons_json in rows:
-                score = float(expected_ret) * 10.0
-                confidence = "High" if conf >= 0.7 else "Med" if conf >= 0.35 else "Low"
->>>>>>> origin/main
                 reasons = []
                 try:
                     reasons = json.loads(reasons_json)
                 except Exception:
                     reasons = ["model-prediction"]
-<<<<<<< HEAD
                 reasons.extend([
                     f"source_rel={src_rel:.2f}",
                     f"novelty={novelty:.2f}",
                     f"p_up={prob_up:.2f}",
                 ])
-=======
->>>>>>> origin/main
                 db_add_alert(
                     {
                         "id": f"alert-{eid}",
@@ -1032,13 +1005,8 @@ def price_loop() -> None:
 
 def daily_trainer_loop() -> None:
     """
-<<<<<<< HEAD
     Every ~6h: train per-coin Ridge models for 1h/4h/24h horizons,
     with walk-forward holdout metrics.
-=======
-    Every ~6h: train a per-coin Ridge model to predict next-24h return,
-    with walk-forward style holdout metrics.
->>>>>>> origin/main
     """
     from sklearn.linear_model import Ridge
     from sklearn.metrics import mean_absolute_error
@@ -1061,10 +1029,6 @@ def daily_trainer_loop() -> None:
                     dfp["ret_6h"] = dfp["close"].pct_change(6)
                     dfp["ret_24h"] = dfp["close"].pct_change(24)
                     dfp["vol_24h"] = dfp["ret_1h"].rolling(24, min_periods=3).std().fillna(0.0)
-<<<<<<< HEAD
-=======
-                    dfp["ret_next_24h"] = dfp["close"].pct_change(periods=horizon_hours).shift(-horizon_hours)
->>>>>>> origin/main
 
                     since_iso = dfp.index.min().isoformat()
                     with sqlite3.connect(DB_PATH) as db:
@@ -1087,7 +1051,6 @@ def daily_trainer_loop() -> None:
                     dfs["ema24"] = dfs["score"].ewm(span=24, adjust=False).mean()
                     dfs["cnt"] = (dfs["score"] != 0).astype(int).rolling(24, min_periods=1).sum()
 
-<<<<<<< HEAD
                     if erows:
                         event_rows = []
                         for ets, fjson in erows:
@@ -1186,56 +1149,6 @@ def daily_trainer_loop() -> None:
                             f"Trainer: {coin} h={horizon_hours} acc={acc:.3f} "
                             f"mae={mae:.4f} n={n}"
                         )
-=======
-                    d = dfp.join(dfs[["ema6", "ema24", "cnt"]], how="left").fillna(0.0)
-                    feats = ["ema6", "ema24", "cnt", "ret_1h", "ret_6h", "ret_24h", "vol_24h"]
-                    y = d["ret_next_24h"].dropna()
-                    X = d.loc[y.index, feats]
-                    if len(y) < 72:
-                        continue
-
-                    n = len(y)
-                    split = int(n * 0.8)
-                    Xtr, Xte = X.iloc[:split], X.iloc[split:]
-                    ytr, yte = y.iloc[:split], y.iloc[split:]
-
-                    mdl = Ridge(alpha=0.8).fit(Xtr, ytr)
-                    yhat = mdl.predict(Xte)
-                    mae = float(mean_absolute_error(yte, yhat))
-                    acc = float(np.mean((yhat >= 0) == (yte.values >= 0)))
-                    baseline = float(np.mean(yte.values >= 0))
-                    score = max(-1.0, min(1.0, (acc - baseline) - mae))
-
-                    art = {
-                        "coin": coin,
-                        "trained_at": datetime.now(timezone.utc).isoformat(),
-                        "horizon_hours": horizon_hours,
-                        "n_samples": int(n),
-                        "r2": score,
-                        "path": os.path.join(MODEL_DIR, f"{coin}.pkl"),
-                    }
-                    with open(art["path"], "wb") as f:
-                        pickle.dump({"model": mdl, "features": feats, "version": MODEL_VERSION}, f)
-
-                    with sqlite3.connect(DB_PATH) as db:
-                        db.execute(
-                            "INSERT OR REPLACE INTO models VALUES(?,?,?,?,?,?)",
-                            (
-                                art["coin"], art["trained_at"], art["horizon_hours"],
-                                art["n_samples"], art["r2"], art["path"],
-                            ),
-                        )
-                        db.execute(
-                            """INSERT INTO model_eval
-                               (ts, coin, model_version, horizon_h, n_test, direction_acc, mae, baseline_acc)
-                               VALUES(?,?,?,?,?,?,?,?)""",
-                            (
-                                art["trained_at"], coin, MODEL_VERSION, horizon_hours,
-                                int(len(yte)), acc, mae, baseline,
-                            ),
-                        )
-                    print(f"Trainer: {coin} acc={acc:.3f} mae={mae:.4f} n={n}")
->>>>>>> origin/main
                 except Exception as e:
                     print(f"Trainer coin error {coin}:", e)
         except Exception as e:
@@ -1261,19 +1174,8 @@ def on_start():
     except NameError:
         pass
 
-    # Start semantic memory (optional)
-    try:
-        if MemoryIndex is not None:
-            # directory, not DB file
-            MEM = MemoryIndex(base_dir=MEM_DIR)
-            # use MiniLM sentence transformer
-            MEM.start(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            print("[Memory] semantic index ready.")
-        else:
-            print("[Memory] package not available; skipping.")
-    except Exception as e:
-        MEM = None
-        print("[Memory] failed to start:", e)
+    # Start semantic memory in background (non-blocking startup)
+    threading.Thread(target=init_memory, daemon=True).start()
 
 
 # =============================================================================
@@ -1403,7 +1305,6 @@ def predictions_api(window_hours: int = 48):
                 ema6 = ema24 = 0.0
                 cnt_val = 0
 
-<<<<<<< HEAD
             topic_bias = keyword_hits = 0.0
             source_rel_avg = novelty_avg = 0.5
             if erows:
@@ -1418,8 +1319,6 @@ def predictions_api(window_hours: int = 48):
                 source_rel_avg = float(np.mean([f.get("source_reliability", 0.5) for f in feats]))
                 novelty_avg = float(np.mean([f.get("novelty", 0.5) for f in feats]))
 
-=======
->>>>>>> origin/main
             market_ret_1h = market_ret_6h = market_ret_24h = market_vol = 0.0
             try:
                 kl = klines_close_prices(full, days=2, interval="1h")
@@ -1439,7 +1338,6 @@ def predictions_api(window_hours: int = 48):
             conf_score = 0.1
             direction = "up"
             model_score: Optional[float] = None
-<<<<<<< HEAD
             reason_codes = [
                 f"sent_ema6={ema6:+.3f}",
                 f"sent_ema24={ema24:+.3f}",
@@ -1462,9 +1360,6 @@ def predictions_api(window_hours: int = 48):
                 "source_reliability": source_rel_avg,
                 "novelty": novelty_avg,
             }
-=======
-            reason_codes = [f"sent_ema6={ema6:+.3f}", f"sent_ema24={ema24:+.3f}", f"news_cnt={cnt_val}"]
->>>>>>> origin/main
 
             meta = db.execute(
                 "SELECT trained_at, n_samples, quality_score, path FROM models_horizon WHERE coin=? AND horizon_hours=24",
@@ -1472,13 +1367,8 @@ def predictions_api(window_hours: int = 48):
             ).fetchone()
 
             if meta:
-<<<<<<< HEAD
                 _, n_samples, quality_score, mdl_path = meta
                 model_score = quality_score
-=======
-                _, _, n_samples, r2, mdl_path = meta
-                model_score = r2
->>>>>>> origin/main
                 try:
                     with open(mdl_path, "rb") as f:
                         obj = pickle.load(f)
@@ -1489,29 +1379,13 @@ def predictions_api(window_hours: int = 48):
                         mdl = obj
                         feats = ["ema6", "ema24", "cnt"]
 
-<<<<<<< HEAD
-=======
-                    feature_map = {
-                        "ema6": ema6,
-                        "ema24": ema24,
-                        "cnt": cnt_val,
-                        "ret_1h": market_ret_1h,
-                        "ret_6h": market_ret_6h,
-                        "ret_24h": market_ret_24h,
-                        "vol_24h": market_vol,
-                    }
->>>>>>> origin/main
                     x = np.array([[feature_map.get(name, 0.0) for name in feats]], dtype=float)
                     yhat = float(mdl.predict(x)[0])
                     if not math.isfinite(yhat):
                         raise ValueError("non-finite yhat")
                     pred_val = yhat
                     prob_up = logistic(yhat * 35.0)
-<<<<<<< HEAD
                     conf_score = min(0.99, max(0.05, abs(yhat) * 30.0 + 0.2 * source_rel_avg))
-=======
-                    conf_score = min(0.99, max(0.05, abs(yhat) * 30.0))
->>>>>>> origin/main
                     reason_codes.extend([
                         f"ret_6h={market_ret_6h:+.4f}",
                         f"ret_24h={market_ret_24h:+.4f}",
@@ -1521,17 +1395,10 @@ def predictions_api(window_hours: int = 48):
                     print(f"Predict {coin} failed:", e)
 
             if pred_val is None:
-<<<<<<< HEAD
                 s = 0.6 * ema6 + 0.25 * ema24 + 0.15 * topic_bias
                 pred_val = float(s * 0.02 + 0.2 * market_ret_6h + 0.005 * (source_rel_avg - 0.5))
                 prob_up = logistic((ema6 + ema24 + topic_bias + market_ret_6h * 5.0) * 2.0)
                 conf_score = min(0.8, max(0.05, abs(s) + 0.15 * source_rel_avg))
-=======
-                s = 0.7 * ema6 + 0.3 * ema24
-                pred_val = float(s * 0.02 + 0.2 * market_ret_6h)
-                prob_up = logistic((ema6 + ema24 + market_ret_6h * 5.0) * 2.0)
-                conf_score = min(0.8, max(0.05, abs(s)))
->>>>>>> origin/main
                 reason_codes.append("heuristic-fallback")
 
             direction = "up" if pred_val >= 0 else "down"
@@ -1554,11 +1421,7 @@ def predictions_api(window_hours: int = 48):
                     "sample_size": sample,
                     "model_version": MODEL_VERSION,
                     "model_quality_score": model_score,
-<<<<<<< HEAD
                     "reason_codes": reason_codes[:8],
-=======
-                    "reason_codes": reason_codes[:6],
->>>>>>> origin/main
                 }
             )
 
@@ -1575,11 +1438,7 @@ def predictions_api(window_hours: int = 48):
                     "expected_move": pred_val,
                     "sample_size": sample,
                     "model_quality_score": model_score,
-<<<<<<< HEAD
                     "reason_codes": reason_codes[:8],
-=======
-                    "reason_codes": reason_codes[:6],
->>>>>>> origin/main
                 },
             )
 
@@ -1702,316 +1561,9 @@ def home():
 
     preds_html = render_predictions(preds)
 
-    html = r"""
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Crypto Intel</title>
-  <style>
-    :root {
-      --bg: #0b1220; --panel: #0f172a; --panel-2: #0c1526;
-      --card: #1f2937; --card-alt: #111827; --text: #e5e7eb;
-      --muted: #94a3b8; --link: #60a5fa; --good: #22c55e; --bad: #ef4444;
-      --shadow: rgba(0,0,0,0.25); --track: #0a0f1a; --thumb: #2a3342; --thumbh: #3a4558;
-      --side: 280px; --footer-h: 48px;
-    }
-    * { box-sizing:border-box }
-    body {
-      margin:0; background:var(--bg); color:var(--text); font-family:Segoe UI, Arial, sans-serif;
-      overflow-y:scroll; padding-bottom: calc(var(--footer-h) + 12px);
-    }
-    * { scrollbar-width:thin; scrollbar-color:var(--thumb) var(--track) }
-    ::-webkit-scrollbar{ width:10px; height:10px }
-    ::-webkit-scrollbar-track{ background:var(--track) }
-    ::-webkit-scrollbar-thumb{ background:var(--thumb); border-radius:8px; border:2px solid var(--track) }
-    ::-webkit-scrollbar-thumb:hover{ background:var(--thumbh) }
-
-    .layout { display:grid; grid-template-columns: var(--side) 1fr 300px; min-height:100vh }
-    .sidebar { background:var(--panel); height:100vh; overflow-y:auto; padding:10px; position:sticky; top:0 }
-    .content { padding:20px 24px }
-    .right { background:var(--panel); padding:16px }
-
-    .h2 { font-size:22px; margin:6px 0 10px 0 }
-    .card { background:var(--card); border-radius:14px; padding:14px; margin:10px 0; box-shadow:0 2px 6px var(--shadow) }
-    .card.alt { background:var(--card-alt) }
-    .row { display:flex; gap:8px; align-items:center; margin-bottom:6px }
-    .pill { background:rgba(255,255,255,.08); padding:3px 8px; border-radius:999px; font-size:12px }
-    .conf.low{ color:#f59e0b } .conf.med{ color:#22d3ee } .conf.high{ color:#22c55e }
-    .score{ font-weight:700 }
-    .title{ font-weight:600 }
-    .meta{ font-size:12px; opacity:.8; margin-top:4px }
-    .muted{ color:var(--muted); font-size:13px }
-    .status-dot{ display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; background:#6b7280; vertical-align:middle }
-    .status-dot.ok{ background:#22c55e }
-    .status-dot.bad{ background:#ef4444 }
-    .reasons{ font-size:12px; opacity:.82; margin-top:4px }
-    .link{ color:var(--link) }
-    .tabs{ display:flex; gap:8px; margin:4px 0 8px 0 }
-    .tab{ background:var(--card-alt); color:var(--text); border:none; padding:6px 10px; border-radius:10px; cursor:pointer }
-    .tab.active{ background:var(--card); font-weight:600 }
-    .pane{ display:none } .pane.active{ display:block }
-
-    .avatar{ width:24px; height:24px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-size:14px; color:#fff; font-weight:700 }
-
-    .footer{ position:fixed; left:0; right:0; bottom:0; height:var(--footer-h); background:var(--panel-2); border-top:1px solid rgba(255,255,255,.06); z-index:10 }
-    .ticker{ overflow:hidden; white-space:nowrap; width:100%; height:100% }
-    .track{ display:inline-flex; gap:18px; padding:10px; animation:scroll 35s linear infinite }
-    @keyframes scroll { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
-    .tick{ display:inline-flex; gap:10px; padding:6px 12px; background:var(--card); border-radius:999px; align-items:center }
-    .tick .avatar{ width:18px; height:18px; font-size:12px }
-    .tick .sym{ font-weight:800; letter-spacing:.5px }
-    .tick .val{ font-weight:700 }
-    .tick.pos .val{ color:var(--good) }
-    .tick.neg .val{ color:var(--bad) }
-  </style>
-  <script>
-    const ORDER = __ORDER__;
-    const COIN_META = __COIN_META__;
-
-    function fmt(v){ return (v<10)? v.toFixed(4) : v.toFixed(2); }
-
-    function renderTicker(data){
-      const track = document.getElementById('ticker-track');
-      if(!track) return;
-      let html = '';
-      for(const full of ORDER){
-        const base = full.replace('USDT','');
-        const p = data[full];
-        const meta = COIN_META[base] || {icon: base[0], color:'#555'};
-        if(!p){
-          html += `<div class="tick"><span class="avatar" style="background:${meta.color}">${meta.icon}</span><span class="sym">${base}</span><span class="val">…</span></div>`;
-          continue;
-        }
-        const pct  = (p.changePct>=0?'+':'') + p.changePct.toFixed(2) + '%';
-        const last = '$' + fmt(p.last);
-        const cls  = p.changePct>=0 ? 'pos' : 'neg';
-        html += `
-          <div class="tick ${cls}">
-            <span class="avatar" style="background:${meta.color}">${meta.icon}</span>
-            <span class="sym">${base}</span>
-            <span class="val">${pct} / ${last}</span>
-          </div>`;
-      }
-      track.innerHTML = html + html;
-    }
-
-    function wireTabs(){
-      const tabs = document.querySelectorAll('.tab');
-      tabs.forEach(t => t.addEventListener('click', () => {
-        tabs.forEach(x=>x.classList.remove('active'));
-        t.classList.add('active');
-        document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
-        document.getElementById(t.dataset.pane).classList.add('active');
-      }));
-    }
-
-    function renderPredictionsCards(preds){
-      const mount = document.getElementById('predictions-list');
-      if(!mount) return;
-      if(!preds || preds.length===0){
-        mount.innerHTML = '<div class="muted">No predictions yet — gathering data…</div>';
-        return;
-      }
-      let html = '';
-      for(const c of preds){
-        const base = c.symbol;
-        const meta = COIN_META[base] || {icon: base[0], color:'#444'};
-        const arrow = c.direction === 'up' ? '⬆️' : '⬇️';
-        const conf = (c.confidence || 'low');
-        const score = (c.score>=0?'+':'') + Number(c.score||0).toFixed(4);
-        const prob = Math.round((c.probability_up||0.5)*100);
-        const move = (c.expected_move_pct>=0?'+':'') + Number(c.expected_move_pct||0).toFixed(2) + '%';
-        const reasons = (c.reason_codes||[]).slice(0,3).join(' • ');
-        html += `
-          <div class="card pred">
-            <div class="row" style="justify-content:space-between">
-              <div class="row" style="gap:10px">
-                <div class="avatar" style="background:${meta.color}">${meta.icon}</div>
-                <div class="title">${base} ${arrow}</div>
-              </div>
-              <div class="conf ${conf}">${conf.toUpperCase()}</div>
-            </div>
-            <div class="meta">Expected move: <b>${move}</b> • P(up): <b>${prob}%</b></div>
-            <div class="meta">Score: <b>${score}</b> • Sources: ${c.sample_size||0}</div>
-            <div class="reasons">${reasons || 'model inference'}</div>
-          </div>`;
-      }
-      mount.innerHTML = html;
-    }
-
-    function renderModelQuality(rows){
-      const mount = document.getElementById('model-quality');
-      if(!mount) return;
-      if(!rows || rows.length===0){
-        mount.innerHTML = '<div class="muted">No model evaluation rows yet.</div>';
-        return;
-      }
-      const seen = new Set();
-      const top = [];
-      for(const r of rows){
-        if(!r || !r.coin) continue;
-        if(seen.has(r.coin)) continue;
-        seen.add(r.coin);
-        top.push(r);
-        if(top.length >= 8) break;
-      }
-      let html = '';
-      for(const r of top){
-        const acc = (Number(r.direction_acc||0)*100).toFixed(1);
-        const base = (Number(r.baseline_acc||0)*100).toFixed(1);
-        const mae = Number(r.mae||0).toFixed(4);
-        html += `<div class="meta" style="margin-bottom:6px"><b>${r.coin}</b> • Acc ${acc}% (base ${base}%) • MAE ${mae}</div>`;
-      }
-      mount.innerHTML = html || '<div class="muted">No model evaluation rows yet.</div>';
-    }
-
-    function renderInsights(preds){
-      const mount = document.getElementById('prediction-insights');
-      if(!mount) return;
-      if(!preds || preds.length===0){
-        mount.innerHTML = '<div class="muted">Waiting for predictions…</div>';
-        return;
-      }
-      const top = preds[0];
-      const reasons = (top.reason_codes || []).map(r=>`<li>${r}</li>`).join('');
-      mount.innerHTML = `
-        <div class="meta"><b>${top.symbol}</b> ${top.direction==='up'?'⬆️':'⬇️'} • confidence ${(top.confidence||'low').toUpperCase()}</div>
-        <div class="meta">Expected move: <b>${Number(top.expected_move_pct||0).toFixed(2)}%</b></div>
-        <div class="meta">P(up): <b>${Math.round((top.probability_up||0.5)*100)}%</b></div>
-        <ul style="margin:8px 0 0 16px; padding:0">${reasons || '<li>No reason codes.</li>'}</ul>`;
-    }
-
-    async function fetchPrices(){
-      try{
-        const r = await fetch('/prices', {cache:'no-store'});
-        renderTicker(await r.json());
-      }catch(e){}
-    }
-
-    async function fetchPredictions(){
-      try{
-        const r = await fetch('/predictions?window_hours=72', {cache:'no-store'});
-        const payload = await r.json();
-        document.getElementById('model-version').textContent = payload.model_version || 'n/a';
-        document.getElementById('pred-updated').textContent = new Date().toLocaleTimeString();
-        renderPredictionsCards(payload.coins || []);
-        renderInsights(payload.coins || []);
-      }catch(e){}
-    }
-
-    async function fetchModelQuality(){
-      try{
-        const r = await fetch('/debug/model-quality?limit=40', {cache:'no-store'});
-        const rows = await r.json();
-        renderModelQuality(rows || []);
-        const q = document.getElementById('quality-updated');
-        if(q) q.textContent = new Date().toLocaleTimeString();
-      }catch(e){}
-    }
-
-    async function fetchRuntime(){
-      try{
-        const r = await fetch('/debug/runtime', {cache:'no-store'});
-        const rt = await r.json();
-        const av = document.getElementById('app-version');
-        const bs = document.getElementById('backend-started');
-        const mv = document.getElementById('model-version');
-        if(av && rt.app_version) av.textContent = rt.app_version;
-        if(bs && rt.started_at) bs.textContent = new Date(rt.started_at).toLocaleString();
-        if(mv && rt.model_version) mv.textContent = rt.model_version;
-      }catch(e){}
-    }
-
-    async function fetchHealth(){
-      const dot = document.getElementById('health-dot');
-      const txt = document.getElementById('health-text');
-      try{
-        const r = await fetch('/health', {cache:'no-store'});
-        const payload = await r.json();
-        const ok = !!(payload && payload.ok);
-        if(dot){
-          dot.classList.remove('ok','bad');
-          dot.classList.add(ok ? 'ok' : 'bad');
-        }
-        if(txt) txt.textContent = ok ? 'healthy' : 'unhealthy';
-      }catch(e){
-        if(dot){
-          dot.classList.remove('ok');
-          dot.classList.add('bad');
-        }
-        if(txt) txt.textContent = 'offline';
-      }
-    }
-
-    window.addEventListener('DOMContentLoaded', ()=>{
-      wireTabs();
-      fetchPrices();
-      fetchPredictions();
-      fetchModelQuality();
-      fetchRuntime();
-      fetchHealth();
-      setInterval(fetchPrices, 12000);
-      setInterval(fetchPredictions, 30000);
-      setInterval(fetchModelQuality, 120000);
-      setInterval(fetchRuntime, 60000);
-      setInterval(fetchHealth, 30000);
-    });
-  </script>
-</head>
-<body>
-  <div class="layout">
-    <div class="sidebar">
-      <div style="font-weight:700; padding:8px 6px;">Menu</div>
-      <a class="link" href="#alerts" style="display:block; padding:6px 10px;">🔔 Alerts</a>
-      <a class="link" href="#headlines" style="display:block; padding:6px 10px;">📰 Headlines</a>
-      <a class="link" href="#predictions" style="display:block; padding:6px 10px;">📈 Predictions</a>
-    </div>
-
-    <div class="content">
-      <h2 id="alerts" class="h2">🔔 Alerts</h2>
-      __ALERTS_SECTIONS__
-
-      <h2 id="headlines" class="h2" style="margin-top:18px">📰 Latest headlines</h2>
-      __NEWS_HTML__
-
-      <h2 id="predictions" class="h2" style="margin-top:18px">📈 Predictions</h2>
-      <div id="predictions-list">__PREDS_HTML__</div>
-    </div>
-
-    <div class="right">
-      <h3>AI Status</h3>
-      <div class="card alt" style="margin-top:8px">
-        <div class="meta">Local endpoint: <b>127.0.0.1:8000</b></div>
-        <div class="meta">Feeds: <b>__FEEDS_COUNT__</b></div>
-        <div class="meta">Model version: <b id="model-version">__MODEL_VERSION__</b></div>
-        <div class="meta">App version: <b id="app-version">__APP_VERSION__</b></div>
-        <div class="meta">Backend started: <b id="backend-started">unknown</b></div>
-        <div class="meta">Predictions updated: <b id="pred-updated">initial</b></div>
-        <div class="meta">Model quality updated: <b id="quality-updated">initial</b></div>
-        <div class="meta"><span id="health-dot" class="status-dot"></span>Backend health: <b id="health-text">checking…</b></div>
-      </div>
-
-      <h3 style="margin-top:14px">Model quality (recent)</h3>
-      <div id="model-quality" class="card alt">
-        <div class="muted">Loading model metrics…</div>
-      </div>
-
-      <h3 style="margin-top:14px">Top prediction details</h3>
-      <div id="prediction-insights" class="card alt">
-        <div class="muted">Waiting for predictions…</div>
-      </div>
-
-      <div class="footer">
-        <div class="ticker"><div id="ticker-track" class="track"></div></div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-"""
+    html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
     html = (
-        html.replace("__ALERTS_SECTIONS__", alerts_sections)
+        html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
         .replace("__NEWS_HTML__", news_html)
         .replace("__PREDS_HTML__", preds_html)
         .replace("__FEEDS_COUNT__", str(len(FEEDS)))
