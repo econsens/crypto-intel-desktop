@@ -90,6 +90,10 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 MEM_DIR = os.path.join(DB_DIR, "memory")
 os.makedirs(MEM_DIR, exist_ok=True)
 
+MEMORY_MODEL = os.getenv("MEMORY_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+MEMORY_LOCAL_ONLY = os.getenv("MEMORY_LOCAL_ONLY", "1") == "1"
+MEMORY_ALLOW_DOWNLOAD = os.getenv("MEMORY_ALLOW_DOWNLOAD", "0") == "1"
+
 BINANCE = "https://api.binance.com"
 
 TICKER_SYMBOLS: List[str] = [
@@ -586,6 +590,34 @@ def estimate_novelty(title: str) -> float:
         return max(0.05, min(1.0, 1.0 - best))
     except Exception:
         return 0.50
+
+
+def init_memory() -> None:
+    """Best-effort semantic memory init; never block app startup on network downloads."""
+    global MEM
+    if MemoryIndex is None:
+        print("[Memory] package not available; skipping.")
+        return
+
+    try:
+        # IMPORTANT: base_dir must be the root data folder (/data), not /data/memory.
+        # MemoryIndex derives both /data/crypto.db and /data/memory/* paths from this.
+        MEM = MemoryIndex(base_dir=DB_DIR)
+        if MEMORY_LOCAL_ONLY:
+            MEM.start(model_name=MEMORY_MODEL, local_files_only=True)
+            print("[Memory] semantic index ready (local model cache).")
+            return
+        if MEMORY_ALLOW_DOWNLOAD:
+            MEM.start(model_name=MEMORY_MODEL, local_files_only=False)
+            print("[Memory] semantic index ready (download enabled).")
+            return
+
+        # Default: safe startup policy. Try local cache only and keep app running if absent.
+        MEM.start(model_name=MEMORY_MODEL, local_files_only=True)
+        print("[Memory] semantic index ready (default local-only mode).")
+    except Exception as e:
+        MEM = None
+        print("[Memory] disabled:", e)
 
 
 def current_price(symbol: str) -> Optional[float]:
@@ -1139,19 +1171,8 @@ def on_start():
     except NameError:
         pass
 
-    # Start semantic memory (optional)
-    try:
-        if MemoryIndex is not None:
-            # directory, not DB file
-            MEM = MemoryIndex(base_dir=MEM_DIR)
-            # use MiniLM sentence transformer
-            MEM.start(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            print("[Memory] semantic index ready.")
-        else:
-            print("[Memory] package not available; skipping.")
-    except Exception as e:
-        MEM = None
-        print("[Memory] failed to start:", e)
+    # Start semantic memory in background (non-blocking startup)
+    threading.Thread(target=init_memory, daemon=True).start()
 
 
 # =============================================================================

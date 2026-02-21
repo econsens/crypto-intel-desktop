@@ -66,9 +66,17 @@ class MemoryIndex:
 
     # -------- model
 
-    def start(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=False)
-        self.model = AutoModel.from_pretrained(model_name, trust_remote_code=False)
+    def start(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2", local_files_only: bool = False):
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=False,
+            local_files_only=local_files_only,
+        )
+        self.model = AutoModel.from_pretrained(
+            model_name,
+            trust_remote_code=False,
+            local_files_only=local_files_only,
+        )
         self.model.eval()
 
     # -------- helpers
