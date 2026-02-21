@@ -59,7 +59,11 @@ from dateutil import parser as dtparser
 import pickle
 import math
 VERSION = "1.1.0"
+<<<<<<< HEAD
 MODEL_VERSION = "2.1.0"
+=======
+MODEL_VERSION = "2.0.0"
+>>>>>>> origin/main
 STARTED_AT = datetime.now(timezone.utc).isoformat()
 
 # =============================================================================
@@ -234,6 +238,7 @@ def db_init() -> None:
             baseline_acc REAL
         )""")
 
+<<<<<<< HEAD
         # horizon-specific model metadata (phase upgrade)
         db.execute("""CREATE TABLE IF NOT EXISTS models_horizon(
             coin TEXT,
@@ -245,6 +250,8 @@ def db_init() -> None:
             PRIMARY KEY (coin, horizon_hours)
         )""")
 
+=======
+>>>>>>> origin/main
 
 def save_metric(kind: str, ts: str, coin: str, payload: dict) -> None:
     """Insert one metric row; errors are swallowed."""
@@ -539,6 +546,7 @@ def parse_iso(ts: str) -> datetime:
     return dtparser.parse(ts).astimezone(timezone.utc)
 
 
+<<<<<<< HEAD
 def source_key(url: str) -> str:
     try:
         host = httpx.URL(url).host or ""
@@ -588,6 +596,8 @@ def estimate_novelty(title: str) -> float:
         return 0.50
 
 
+=======
+>>>>>>> origin/main
 def current_price(symbol: str) -> Optional[float]:
     snap = PRICES.get(symbol)
     if snap:
@@ -629,6 +639,7 @@ def event_price_at_or_near(symbol: str, target_ts: datetime) -> Optional[float]:
         return None
 
 
+<<<<<<< HEAD
 def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, source_url: str) -> dict:
     f = sentiment_keywords(title)
     now_price = current_price(f"{coin}USDT") or 0.0
@@ -643,12 +654,24 @@ def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, sou
     expected = max(-0.08, min(0.08, base * 0.04))
     prob_up = logistic(base * 2.4)
     confidence = min(0.98, max(0.05, abs(base) + 0.15 * src_rel))
+=======
+def build_event_prediction(coin: str, sentiment: float, title: str, ts: str) -> dict:
+    f = sentiment_keywords(title)
+    now_price = current_price(f"{coin}USDT") or 0.0
+    base = 0.65 * sentiment + 0.35 * f["topic_bias"]
+    expected = max(-0.08, min(0.08, base * 0.04))
+    prob_up = logistic(base * 2.2)
+    confidence = min(0.98, max(0.05, abs(base)))
+>>>>>>> origin/main
     reasons = [
         f"sentiment={sentiment:+.3f}",
         f"topic_bias={f['topic_bias']:+.3f}",
         f"keyword_hits={int(f['keyword_hits'])}",
+<<<<<<< HEAD
         f"source_rel={src_rel:.2f}",
         f"novelty={novelty:.2f}",
+=======
+>>>>>>> origin/main
         f"price_snapshot={now_price:.2f}",
     ]
     return {
@@ -663,13 +686,17 @@ def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, sou
             "sentiment": sentiment,
             "topic_bias": f["topic_bias"],
             "keyword_hits": f["keyword_hits"],
+<<<<<<< HEAD
             "source_reliability": src_rel,
             "novelty": novelty,
+=======
+>>>>>>> origin/main
             "price_snapshot": now_price,
         },
     }
 
 
+<<<<<<< HEAD
 def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, float]) -> Optional[float]:
     try:
         with sqlite3.connect(DB_PATH) as db:
@@ -696,6 +723,8 @@ def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, f
     return None
 
 
+=======
+>>>>>>> origin/main
 # =============================================================================
 # Binance helpers
 # =============================================================================
@@ -764,7 +793,11 @@ def rss_loop():
                         )
 
                         event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
+<<<<<<< HEAD
                         pred = build_event_prediction(coin, sent, n["title"], n["ts"], n["url"])
+=======
+                        pred = build_event_prediction(coin, sent, n["title"], n["ts"])
+>>>>>>> origin/main
                         db_upsert_event(
                             {
                                 "id": event_id,
@@ -774,11 +807,16 @@ def rss_loop():
                                 "title": n["title"],
                                 "source_url": n["url"],
                                 "sentiment": sent,
+<<<<<<< HEAD
                                 "novelty": pred["feature_map"].get("novelty", 0.5),
+=======
+                                "novelty": 1.0,
+>>>>>>> origin/main
                                 "features": pred["feature_map"],
                             }
                         )
                         for h in EVENT_HORIZONS:
+<<<<<<< HEAD
                             expected_h = predict_horizon_expected(
                                 coin,
                                 h,
@@ -795,17 +833,27 @@ def rss_loop():
                             )
                             expected_h = expected_h if expected_h is not None else pred["expected_return"] * (h / 24.0)
                             prob_up_h = logistic(expected_h * 35.0)
+=======
+>>>>>>> origin/main
                             db_upsert_event_prediction(
                                 {
                                     "event_id": event_id,
                                     "horizon_h": h,
                                     "ts": n["ts"],
                                     "model_version": MODEL_VERSION,
+<<<<<<< HEAD
                                     "direction": "up" if expected_h >= 0 else "down",
                                     "expected_return": expected_h,
                                     "probability_up": prob_up_h,
                                     "confidence": pred["confidence"],
                                     "reasons": pred["reasons"] + [f"horizon={h}h"],
+=======
+                                    "direction": pred["direction"],
+                                    "expected_return": pred["expected_return"] * (h / 24.0),
+                                    "probability_up": pred["probability_up"],
+                                    "confidence": pred["confidence"],
+                                    "reasons": pred["reasons"],
+>>>>>>> origin/main
                                 }
                             )
 
@@ -828,8 +876,13 @@ def alert_generation_loop() -> None:
             with sqlite3.connect(DB_PATH) as db:
                 rows = db.execute(
                     """
+<<<<<<< HEAD
                     SELECT e.id, e.title, e.source_url, e.coin, e.ts, e.features,
                            p.expected_return, p.probability_up, p.confidence, p.reasons
+=======
+                    SELECT e.id, e.title, e.source_url, e.coin, e.ts,
+                           p.expected_return, p.confidence, p.reasons
+>>>>>>> origin/main
                     FROM events e
                     JOIN event_predictions p ON p.event_id = e.id
                     WHERE p.horizon_h = 24
@@ -838,6 +891,7 @@ def alert_generation_loop() -> None:
                     """
                 ).fetchall()
 
+<<<<<<< HEAD
             for eid, title, url, coin, ts, features_json, expected_ret, prob_up, conf, reasons_json in rows:
                 feat = {}
                 try:
@@ -850,16 +904,24 @@ def alert_generation_loop() -> None:
                 score = float(expected_ret) * (6.0 + 4.0 * conf) * (0.6 + 0.4 * src_rel) * (0.7 + 0.6 * novelty)
                 confidence_val = conf * conviction
                 confidence = "High" if confidence_val >= 0.60 else "Med" if confidence_val >= 0.35 else "Low"
+=======
+            for eid, title, url, coin, ts, expected_ret, conf, reasons_json in rows:
+                score = float(expected_ret) * 10.0
+                confidence = "High" if conf >= 0.7 else "Med" if conf >= 0.35 else "Low"
+>>>>>>> origin/main
                 reasons = []
                 try:
                     reasons = json.loads(reasons_json)
                 except Exception:
                     reasons = ["model-prediction"]
+<<<<<<< HEAD
                 reasons.extend([
                     f"source_rel={src_rel:.2f}",
                     f"novelty={novelty:.2f}",
                     f"p_up={prob_up:.2f}",
                 ])
+=======
+>>>>>>> origin/main
                 db_add_alert(
                     {
                         "id": f"alert-{eid}",
@@ -970,8 +1032,13 @@ def price_loop() -> None:
 
 def daily_trainer_loop() -> None:
     """
+<<<<<<< HEAD
     Every ~6h: train per-coin Ridge models for 1h/4h/24h horizons,
     with walk-forward holdout metrics.
+=======
+    Every ~6h: train a per-coin Ridge model to predict next-24h return,
+    with walk-forward style holdout metrics.
+>>>>>>> origin/main
     """
     from sklearn.linear_model import Ridge
     from sklearn.metrics import mean_absolute_error
@@ -994,6 +1061,10 @@ def daily_trainer_loop() -> None:
                     dfp["ret_6h"] = dfp["close"].pct_change(6)
                     dfp["ret_24h"] = dfp["close"].pct_change(24)
                     dfp["vol_24h"] = dfp["ret_1h"].rolling(24, min_periods=3).std().fillna(0.0)
+<<<<<<< HEAD
+=======
+                    dfp["ret_next_24h"] = dfp["close"].pct_change(periods=horizon_hours).shift(-horizon_hours)
+>>>>>>> origin/main
 
                     since_iso = dfp.index.min().isoformat()
                     with sqlite3.connect(DB_PATH) as db:
@@ -1016,6 +1087,7 @@ def daily_trainer_loop() -> None:
                     dfs["ema24"] = dfs["score"].ewm(span=24, adjust=False).mean()
                     dfs["cnt"] = (dfs["score"] != 0).astype(int).rolling(24, min_periods=1).sum()
 
+<<<<<<< HEAD
                     if erows:
                         event_rows = []
                         for ets, fjson in erows:
@@ -1114,6 +1186,56 @@ def daily_trainer_loop() -> None:
                             f"Trainer: {coin} h={horizon_hours} acc={acc:.3f} "
                             f"mae={mae:.4f} n={n}"
                         )
+=======
+                    d = dfp.join(dfs[["ema6", "ema24", "cnt"]], how="left").fillna(0.0)
+                    feats = ["ema6", "ema24", "cnt", "ret_1h", "ret_6h", "ret_24h", "vol_24h"]
+                    y = d["ret_next_24h"].dropna()
+                    X = d.loc[y.index, feats]
+                    if len(y) < 72:
+                        continue
+
+                    n = len(y)
+                    split = int(n * 0.8)
+                    Xtr, Xte = X.iloc[:split], X.iloc[split:]
+                    ytr, yte = y.iloc[:split], y.iloc[split:]
+
+                    mdl = Ridge(alpha=0.8).fit(Xtr, ytr)
+                    yhat = mdl.predict(Xte)
+                    mae = float(mean_absolute_error(yte, yhat))
+                    acc = float(np.mean((yhat >= 0) == (yte.values >= 0)))
+                    baseline = float(np.mean(yte.values >= 0))
+                    score = max(-1.0, min(1.0, (acc - baseline) - mae))
+
+                    art = {
+                        "coin": coin,
+                        "trained_at": datetime.now(timezone.utc).isoformat(),
+                        "horizon_hours": horizon_hours,
+                        "n_samples": int(n),
+                        "r2": score,
+                        "path": os.path.join(MODEL_DIR, f"{coin}.pkl"),
+                    }
+                    with open(art["path"], "wb") as f:
+                        pickle.dump({"model": mdl, "features": feats, "version": MODEL_VERSION}, f)
+
+                    with sqlite3.connect(DB_PATH) as db:
+                        db.execute(
+                            "INSERT OR REPLACE INTO models VALUES(?,?,?,?,?,?)",
+                            (
+                                art["coin"], art["trained_at"], art["horizon_hours"],
+                                art["n_samples"], art["r2"], art["path"],
+                            ),
+                        )
+                        db.execute(
+                            """INSERT INTO model_eval
+                               (ts, coin, model_version, horizon_h, n_test, direction_acc, mae, baseline_acc)
+                               VALUES(?,?,?,?,?,?,?,?)""",
+                            (
+                                art["trained_at"], coin, MODEL_VERSION, horizon_hours,
+                                int(len(yte)), acc, mae, baseline,
+                            ),
+                        )
+                    print(f"Trainer: {coin} acc={acc:.3f} mae={mae:.4f} n={n}")
+>>>>>>> origin/main
                 except Exception as e:
                     print(f"Trainer coin error {coin}:", e)
         except Exception as e:
@@ -1281,6 +1403,7 @@ def predictions_api(window_hours: int = 48):
                 ema6 = ema24 = 0.0
                 cnt_val = 0
 
+<<<<<<< HEAD
             topic_bias = keyword_hits = 0.0
             source_rel_avg = novelty_avg = 0.5
             if erows:
@@ -1295,6 +1418,8 @@ def predictions_api(window_hours: int = 48):
                 source_rel_avg = float(np.mean([f.get("source_reliability", 0.5) for f in feats]))
                 novelty_avg = float(np.mean([f.get("novelty", 0.5) for f in feats]))
 
+=======
+>>>>>>> origin/main
             market_ret_1h = market_ret_6h = market_ret_24h = market_vol = 0.0
             try:
                 kl = klines_close_prices(full, days=2, interval="1h")
@@ -1314,6 +1439,7 @@ def predictions_api(window_hours: int = 48):
             conf_score = 0.1
             direction = "up"
             model_score: Optional[float] = None
+<<<<<<< HEAD
             reason_codes = [
                 f"sent_ema6={ema6:+.3f}",
                 f"sent_ema24={ema24:+.3f}",
@@ -1336,6 +1462,9 @@ def predictions_api(window_hours: int = 48):
                 "source_reliability": source_rel_avg,
                 "novelty": novelty_avg,
             }
+=======
+            reason_codes = [f"sent_ema6={ema6:+.3f}", f"sent_ema24={ema24:+.3f}", f"news_cnt={cnt_val}"]
+>>>>>>> origin/main
 
             meta = db.execute(
                 "SELECT trained_at, n_samples, quality_score, path FROM models_horizon WHERE coin=? AND horizon_hours=24",
@@ -1343,8 +1472,13 @@ def predictions_api(window_hours: int = 48):
             ).fetchone()
 
             if meta:
+<<<<<<< HEAD
                 _, n_samples, quality_score, mdl_path = meta
                 model_score = quality_score
+=======
+                _, _, n_samples, r2, mdl_path = meta
+                model_score = r2
+>>>>>>> origin/main
                 try:
                     with open(mdl_path, "rb") as f:
                         obj = pickle.load(f)
@@ -1355,13 +1489,29 @@ def predictions_api(window_hours: int = 48):
                         mdl = obj
                         feats = ["ema6", "ema24", "cnt"]
 
+<<<<<<< HEAD
+=======
+                    feature_map = {
+                        "ema6": ema6,
+                        "ema24": ema24,
+                        "cnt": cnt_val,
+                        "ret_1h": market_ret_1h,
+                        "ret_6h": market_ret_6h,
+                        "ret_24h": market_ret_24h,
+                        "vol_24h": market_vol,
+                    }
+>>>>>>> origin/main
                     x = np.array([[feature_map.get(name, 0.0) for name in feats]], dtype=float)
                     yhat = float(mdl.predict(x)[0])
                     if not math.isfinite(yhat):
                         raise ValueError("non-finite yhat")
                     pred_val = yhat
                     prob_up = logistic(yhat * 35.0)
+<<<<<<< HEAD
                     conf_score = min(0.99, max(0.05, abs(yhat) * 30.0 + 0.2 * source_rel_avg))
+=======
+                    conf_score = min(0.99, max(0.05, abs(yhat) * 30.0))
+>>>>>>> origin/main
                     reason_codes.extend([
                         f"ret_6h={market_ret_6h:+.4f}",
                         f"ret_24h={market_ret_24h:+.4f}",
@@ -1371,10 +1521,17 @@ def predictions_api(window_hours: int = 48):
                     print(f"Predict {coin} failed:", e)
 
             if pred_val is None:
+<<<<<<< HEAD
                 s = 0.6 * ema6 + 0.25 * ema24 + 0.15 * topic_bias
                 pred_val = float(s * 0.02 + 0.2 * market_ret_6h + 0.005 * (source_rel_avg - 0.5))
                 prob_up = logistic((ema6 + ema24 + topic_bias + market_ret_6h * 5.0) * 2.0)
                 conf_score = min(0.8, max(0.05, abs(s) + 0.15 * source_rel_avg))
+=======
+                s = 0.7 * ema6 + 0.3 * ema24
+                pred_val = float(s * 0.02 + 0.2 * market_ret_6h)
+                prob_up = logistic((ema6 + ema24 + market_ret_6h * 5.0) * 2.0)
+                conf_score = min(0.8, max(0.05, abs(s)))
+>>>>>>> origin/main
                 reason_codes.append("heuristic-fallback")
 
             direction = "up" if pred_val >= 0 else "down"
@@ -1397,7 +1554,11 @@ def predictions_api(window_hours: int = 48):
                     "sample_size": sample,
                     "model_version": MODEL_VERSION,
                     "model_quality_score": model_score,
+<<<<<<< HEAD
                     "reason_codes": reason_codes[:8],
+=======
+                    "reason_codes": reason_codes[:6],
+>>>>>>> origin/main
                 }
             )
 
@@ -1414,7 +1575,11 @@ def predictions_api(window_hours: int = 48):
                     "expected_move": pred_val,
                     "sample_size": sample,
                     "model_quality_score": model_score,
+<<<<<<< HEAD
                     "reason_codes": reason_codes[:8],
+=======
+                    "reason_codes": reason_codes[:6],
+>>>>>>> origin/main
                 },
             )
 
