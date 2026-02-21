@@ -51,7 +51,6 @@ import threading
 import time
 import os
 import json
-import random
 import sqlite3
 import httpx
 from hashlib import sha256
@@ -60,6 +59,8 @@ from dateutil import parser as dtparser
 import pickle
 import math
 VERSION = "1.1.0"
+MODEL_VERSION = "2.1.0"
+STARTED_AT = datetime.now(timezone.utc).isoformat()
 
 # =============================================================================
 # Phase-2: Semantic Memory (optional)
@@ -117,8 +118,14 @@ FEEDS = [
     "https://news.bitcoin.com/feed/",
 ]
 
+SOURCE_WEIGHTS = {
+    "cointelegraph.com": 0.64,
+    "news.bitcoin.com": 0.58,
+}
+
 # shared price cache for ticker bar
 PRICES: Dict[str, Dict[str, float]] = {}
+EVENT_HORIZONS = [1, 4, 24]
 
 
 # =============================================================================
@@ -176,6 +183,68 @@ def db_init() -> None:
             payload TEXT
         )""")
 
+        # event-centric AI tables
+        db.execute("""CREATE TABLE IF NOT EXISTS events(
+            id TEXT PRIMARY KEY,
+            nid TEXT,
+            coin TEXT,
+            ts TEXT,
+            title TEXT,
+            source_url TEXT,
+            sentiment REAL,
+            novelty REAL,
+            features TEXT
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_events_coin_ts ON events(coin, ts)")
+
+        db.execute("""CREATE TABLE IF NOT EXISTS event_predictions(
+            event_id TEXT,
+            horizon_h INTEGER,
+            ts TEXT,
+            model_version TEXT,
+            direction TEXT,
+            expected_return REAL,
+            probability_up REAL,
+            confidence REAL,
+            reasons TEXT,
+            PRIMARY KEY(event_id, horizon_h)
+        )""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_event_predictions_ts ON event_predictions(ts)")
+
+        db.execute("""CREATE TABLE IF NOT EXISTS event_outcomes(
+            event_id TEXT,
+            horizon_h INTEGER,
+            resolved_at TEXT,
+            entry_price REAL,
+            exit_price REAL,
+            realized_return REAL,
+            hit INTEGER,
+            PRIMARY KEY(event_id, horizon_h)
+        )""")
+
+        db.execute("""CREATE TABLE IF NOT EXISTS model_eval(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT,
+            coin TEXT,
+            model_version TEXT,
+            horizon_h INTEGER,
+            n_test INTEGER,
+            direction_acc REAL,
+            mae REAL,
+            baseline_acc REAL
+        )""")
+
+        # horizon-specific model metadata (phase upgrade)
+        db.execute("""CREATE TABLE IF NOT EXISTS models_horizon(
+            coin TEXT,
+            horizon_hours INTEGER,
+            trained_at TEXT,
+            n_samples INTEGER,
+            quality_score REAL,
+            path TEXT,
+            PRIMARY KEY (coin, horizon_hours)
+        )""")
+
 
 def save_metric(kind: str, ts: str, coin: str, payload: dict) -> None:
     """Insert one metric row; errors are swallowed."""
@@ -229,6 +298,65 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
         )
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def db_upsert_event(item: dict) -> None:
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
+            """INSERT OR REPLACE INTO events
+               (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                item["id"],
+                item["nid"],
+                item["coin"],
+                item["ts"],
+                item["title"],
+                item["source_url"],
+                float(item["sentiment"]),
+                float(item["novelty"]),
+                json.dumps(item.get("features", {})),
+            ),
+        )
+
+
+def db_upsert_event_prediction(item: dict) -> None:
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
+            """INSERT OR REPLACE INTO event_predictions
+               (event_id, horizon_h, ts, model_version, direction, expected_return,
+                probability_up, confidence, reasons)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                item["event_id"],
+                int(item["horizon_h"]),
+                item["ts"],
+                item["model_version"],
+                item["direction"],
+                float(item["expected_return"]),
+                float(item["probability_up"]),
+                float(item["confidence"]),
+                json.dumps(item.get("reasons", [])),
+            ),
+        )
+
+
+def db_insert_outcome(item: dict) -> None:
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
+            """INSERT OR REPLACE INTO event_outcomes
+               (event_id, horizon_h, resolved_at, entry_price, exit_price, realized_return, hit)
+               VALUES(?,?,?,?,?,?,?)""",
+            (
+                item["event_id"],
+                int(item["horizon_h"]),
+                item["resolved_at"],
+                float(item["entry_price"]),
+                float(item["exit_price"]),
+                float(item["realized_return"]),
+                int(item["hit"]),
+            ),
+        )
 
 
 # =============================================================================
@@ -380,6 +508,194 @@ def signed_sentiment(title: str) -> float:
     return weak_fallback_sentiment(title)
 
 
+def sentiment_keywords(title: str) -> Dict[str, float]:
+    t = title.lower()
+    topic_weights = {
+        "etf": 0.25,
+        "approval": 0.20,
+        "partnership": 0.15,
+        "adoption": 0.15,
+        "upgrade": 0.10,
+        "hack": -0.30,
+        "lawsuit": -0.25,
+        "ban": -0.20,
+        "exploit": -0.25,
+        "liquidation": -0.15,
+    }
+    out = {"topic_bias": 0.0, "keyword_hits": 0.0}
+    for k, w in topic_weights.items():
+        if k in t:
+            out["topic_bias"] += w
+            out["keyword_hits"] += 1.0
+    return out
+
+
+def logistic(x: float) -> float:
+    x = max(-10.0, min(10.0, x))
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def parse_iso(ts: str) -> datetime:
+    return dtparser.parse(ts).astimezone(timezone.utc)
+
+
+def source_key(url: str) -> str:
+    try:
+        host = httpx.URL(url).host or ""
+    except Exception:
+        host = ""
+    return host.lower().strip()
+
+
+def source_reliability(url: str) -> float:
+    host = source_key(url)
+    if not host:
+        return 0.50
+    for k, v in SOURCE_WEIGHTS.items():
+        if host.endswith(k):
+            return float(v)
+    return 0.52
+
+
+def estimate_novelty(title: str) -> float:
+    """Return novelty in [0..1], where higher means more novel headline."""
+    if MEM is not None:
+        try:
+            hits = MEM.search(title, 1)
+            if hits:
+                top = hits[0]
+                sim = float(top.get("score", 0.0))
+                return max(0.05, min(1.0, 1.0 - sim))
+        except Exception:
+            pass
+
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            row = db.execute(
+                "SELECT title FROM news ORDER BY ts DESC LIMIT 200"
+            ).fetchall()
+        t0 = set(title.lower().split())
+        best = 0.0
+        for (prev,) in row:
+            t1 = set((prev or "").lower().split())
+            if not t0 or not t1:
+                continue
+            jac = len(t0 & t1) / max(1, len(t0 | t1))
+            if jac > best:
+                best = jac
+        return max(0.05, min(1.0, 1.0 - best))
+    except Exception:
+        return 0.50
+
+
+def current_price(symbol: str) -> Optional[float]:
+    snap = PRICES.get(symbol)
+    if snap:
+        return float(snap.get("last", 0.0)) or None
+    try:
+        with httpx.Client(timeout=6) as c:
+            r = c.get(f"{BINANCE}/api/v3/ticker/price", params={"symbol": symbol})
+            r.raise_for_status()
+            return float(r.json()["price"])
+    except Exception:
+        return None
+
+
+def event_price_at_or_near(symbol: str, target_ts: datetime) -> Optional[float]:
+    """Get close price near target_ts using 1h candles."""
+    try:
+        ms = int(target_ts.timestamp() * 1000)
+        start = ms - 2 * 3600 * 1000
+        end = ms + 2 * 3600 * 1000
+        with httpx.Client(timeout=8) as c:
+            r = c.get(
+                f"{BINANCE}/api/v3/klines",
+                params={"symbol": symbol, "interval": "1h", "startTime": start, "endTime": end},
+            )
+            r.raise_for_status()
+            data = r.json()
+        if not data:
+            return current_price(symbol)
+        best = None
+        best_dt = 10**18
+        for k in data:
+            ts_ms = int(k[0])
+            delta = abs(ts_ms - ms)
+            if delta < best_dt:
+                best_dt = delta
+                best = float(k[4])
+        return best
+    except Exception:
+        return None
+
+
+def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, source_url: str) -> dict:
+    f = sentiment_keywords(title)
+    now_price = current_price(f"{coin}USDT") or 0.0
+    src_rel = source_reliability(source_url)
+    novelty = estimate_novelty(title)
+    base = (
+        0.50 * sentiment
+        + 0.25 * f["topic_bias"]
+        + 0.15 * (src_rel - 0.5)
+        + 0.10 * (novelty - 0.5)
+    )
+    expected = max(-0.08, min(0.08, base * 0.04))
+    prob_up = logistic(base * 2.4)
+    confidence = min(0.98, max(0.05, abs(base) + 0.15 * src_rel))
+    reasons = [
+        f"sentiment={sentiment:+.3f}",
+        f"topic_bias={f['topic_bias']:+.3f}",
+        f"keyword_hits={int(f['keyword_hits'])}",
+        f"source_rel={src_rel:.2f}",
+        f"novelty={novelty:.2f}",
+        f"price_snapshot={now_price:.2f}",
+    ]
+    return {
+        "coin": coin,
+        "ts": ts,
+        "expected_return": expected,
+        "probability_up": prob_up,
+        "confidence": confidence,
+        "direction": "up" if expected >= 0 else "down",
+        "reasons": reasons,
+        "feature_map": {
+            "sentiment": sentiment,
+            "topic_bias": f["topic_bias"],
+            "keyword_hits": f["keyword_hits"],
+            "source_reliability": src_rel,
+            "novelty": novelty,
+            "price_snapshot": now_price,
+        },
+    }
+
+
+def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, float]) -> Optional[float]:
+    try:
+        with sqlite3.connect(DB_PATH) as db:
+            row = db.execute(
+                "SELECT path FROM models_horizon WHERE coin=? AND horizon_hours=?",
+                (coin, int(horizon_h)),
+            ).fetchone()
+        if not row:
+            return None
+        with open(row[0], "rb") as f:
+            obj = pickle.load(f)
+        mdl = obj.get("model") if isinstance(obj, dict) else obj
+        feats = obj.get("features", []) if isinstance(obj, dict) else []
+        if mdl is None:
+            return None
+        if not feats:
+            feats = ["ema6", "ema24", "cnt", "ret_1h", "ret_6h", "ret_24h", "vol_24h", "topic_bias", "keyword_hits", "source_reliability", "novelty"]
+        x = [[float(feature_map.get(name, 0.0)) for name in feats]]
+        yhat = float(mdl.predict(x)[0])
+        if math.isfinite(yhat):
+            return max(-0.10, min(0.10, yhat))
+    except Exception:
+        return None
+    return None
+
+
 # =============================================================================
 # Binance helpers
 # =============================================================================
@@ -423,40 +739,78 @@ def fetch_rss_once() -> List[dict]:
                     "title": title,
                     "url": link,
                     "ts": ts.isoformat(),
+                    "source": source_key(url),
                 }
             )
     return items
 
 
 def rss_loop():
-    """Continuously fetch RSS, save to DB, compute per-coin sentiment, and feed memory."""
+    """Continuously fetch RSS, create event records, score sentiment, and feed memory."""
     while True:
         try:
             for n in fetch_rss_once():
-                # 1) Save the news item
                 db_add_news(n)
-
-                # 2) Per-coin sentiment for this title
                 cs = coins_in_title(n["title"])
-                if cs:
-                    s = signed_sentiment(n["title"])
-                    with sqlite3.connect(DB_PATH) as db:
-                        for coin in cs:
-                            db.execute(
-                                "INSERT OR REPLACE INTO sentiments(nid, coin, ts, score, source) VALUES(?,?,?,?,?)",
-                                (
-                                    n["id"],
-                                    coin,
-                                    n["ts"],
-                                    float(s),
-                                    "finbert" if _FINBERT else "lexicon",
-                                ),
+                if not cs:
+                    continue
+
+                sent = signed_sentiment(n["title"])
+                with sqlite3.connect(DB_PATH) as db:
+                    for coin in cs:
+                        db.execute(
+                            "INSERT OR REPLACE INTO sentiments(nid, coin, ts, score, source) VALUES(?,?,?,?,?)",
+                            (n["id"], coin, n["ts"], float(sent), "finbert" if _FINBERT else "lexicon"),
+                        )
+
+                        event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
+                        pred = build_event_prediction(coin, sent, n["title"], n["ts"], n["url"])
+                        db_upsert_event(
+                            {
+                                "id": event_id,
+                                "nid": n["id"],
+                                "coin": coin,
+                                "ts": n["ts"],
+                                "title": n["title"],
+                                "source_url": n["url"],
+                                "sentiment": sent,
+                                "novelty": pred["feature_map"].get("novelty", 0.5),
+                                "features": pred["feature_map"],
+                            }
+                        )
+                        for h in EVENT_HORIZONS:
+                            expected_h = predict_horizon_expected(
+                                coin,
+                                h,
+                                {
+                                    **pred["feature_map"],
+                                    "ema6": sent,
+                                    "ema24": sent,
+                                    "cnt": 1.0,
+                                    "ret_1h": 0.0,
+                                    "ret_6h": 0.0,
+                                    "ret_24h": 0.0,
+                                    "vol_24h": 0.0,
+                                },
+                            )
+                            expected_h = expected_h if expected_h is not None else pred["expected_return"] * (h / 24.0)
+                            prob_up_h = logistic(expected_h * 35.0)
+                            db_upsert_event_prediction(
+                                {
+                                    "event_id": event_id,
+                                    "horizon_h": h,
+                                    "ts": n["ts"],
+                                    "model_version": MODEL_VERSION,
+                                    "direction": "up" if expected_h >= 0 else "down",
+                                    "expected_return": expected_h,
+                                    "probability_up": prob_up_h,
+                                    "confidence": pred["confidence"],
+                                    "reasons": pred["reasons"] + [f"horizon={h}h"],
+                                }
                             )
 
-                # 3) Feed the memory index (skip near-duplicates automatically)
                 try:
                     if MEM is not None:
-                        # Consistent with our MemoryIndex API: add_or_skip(id, text, ts, coins)
                         MEM.add_or_skip(n["id"], n["title"], n["ts"], cs)
                 except Exception as me:
                     print("Memory add error (headline):", me)
@@ -464,38 +818,121 @@ def rss_loop():
         except Exception as e:
             print("RSS loop error:", e)
 
-        time.sleep(300)  # every 5 minutes
+        time.sleep(300)
 
 
 def alert_generation_loop() -> None:
-    """Simple alert scoring (placeholder)."""
+    """Generate alerts from event predictions instead of random placeholders."""
     while True:
         try:
-            for n in db_get_news(25):
-                score = round(random.uniform(-0.3, 1.0), 2)
-                coin = random.choice(["BTC", "ETH", "SOL", "BNB", "XRP", "LINK", "ADA"])
-                confidence = "High" if score >= 0.75 else "Med" if score >= 0.55 else "Low"
+            with sqlite3.connect(DB_PATH) as db:
+                rows = db.execute(
+                    """
+                    SELECT e.id, e.title, e.source_url, e.coin, e.ts, e.features,
+                           p.expected_return, p.probability_up, p.confidence, p.reasons
+                    FROM events e
+                    JOIN event_predictions p ON p.event_id = e.id
+                    WHERE p.horizon_h = 24
+                    ORDER BY e.ts DESC
+                    LIMIT 60
+                    """
+                ).fetchall()
+
+            for eid, title, url, coin, ts, features_json, expected_ret, prob_up, conf, reasons_json in rows:
+                feat = {}
+                try:
+                    feat = json.loads(features_json or "{}")
+                except Exception:
+                    feat = {}
+                novelty = float(feat.get("novelty", 0.5))
+                src_rel = float(feat.get("source_reliability", source_reliability(url)))
+                conviction = max(prob_up, 1.0 - prob_up)
+                score = float(expected_ret) * (6.0 + 4.0 * conf) * (0.6 + 0.4 * src_rel) * (0.7 + 0.6 * novelty)
+                confidence_val = conf * conviction
+                confidence = "High" if confidence_val >= 0.60 else "Med" if confidence_val >= 0.35 else "Low"
                 reasons = []
-                if score >= 0.5:
-                    reasons.append("Positive keywords")
-                if coin in n["title"].upper():
-                    reasons.append("Named coin")
-                if score < 0:
-                    reasons.append("Negative words")
-                item = {
-                    "id": n["id"],
-                    "title": n["title"],
-                    "url": n["url"],
-                    "coin": coin,
-                    "score": score,
-                    "confidence": confidence,
-                    "ts": n["ts"],
-                    "reasons": "; ".join(reasons) if reasons else "Heuristic",
-                }
-                db_add_alert(item)
+                try:
+                    reasons = json.loads(reasons_json)
+                except Exception:
+                    reasons = ["model-prediction"]
+                reasons.extend([
+                    f"source_rel={src_rel:.2f}",
+                    f"novelty={novelty:.2f}",
+                    f"p_up={prob_up:.2f}",
+                ])
+                db_add_alert(
+                    {
+                        "id": f"alert-{eid}",
+                        "title": title,
+                        "url": url,
+                        "coin": coin,
+                        "score": round(score, 3),
+                        "confidence": confidence,
+                        "ts": ts,
+                        "reasons": "; ".join(reasons[:4]),
+                    }
+                )
         except Exception as e:
             print("Alert loop error:", e)
-        time.sleep(60)
+        time.sleep(90)
+
+
+def outcome_resolution_loop() -> None:
+    """Resolve event predictions by checking realized returns after target horizons."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            with sqlite3.connect(DB_PATH) as db:
+                rows = db.execute(
+                    """
+                    SELECT p.event_id, p.horizon_h, p.direction, e.coin, e.ts
+                    FROM event_predictions p
+                    JOIN events e ON e.id = p.event_id
+                    LEFT JOIN event_outcomes o
+                      ON o.event_id = p.event_id AND o.horizon_h = p.horizon_h
+                    WHERE o.event_id IS NULL
+                    ORDER BY e.ts ASC
+                    LIMIT 200
+                    """
+                ).fetchall()
+
+            for event_id, horizon_h, direction, coin, event_ts in rows:
+                evt_dt = parse_iso(event_ts)
+                target = evt_dt + timedelta(hours=int(horizon_h))
+                if target > now:
+                    continue
+                symbol = f"{coin}USDT"
+                entry = event_price_at_or_near(symbol, evt_dt)
+                exit_ = event_price_at_or_near(symbol, target)
+                if not entry or not exit_:
+                    continue
+                realized = (exit_ / entry) - 1.0
+                hit = int((direction == "up" and realized >= 0) or (direction == "down" and realized < 0))
+                db_insert_outcome(
+                    {
+                        "event_id": event_id,
+                        "horizon_h": horizon_h,
+                        "resolved_at": now.isoformat(),
+                        "entry_price": entry,
+                        "exit_price": exit_,
+                        "realized_return": realized,
+                        "hit": hit,
+                    }
+                )
+                save_metric(
+                    "event_outcome",
+                    now.isoformat(),
+                    coin,
+                    {
+                        "event_id": event_id,
+                        "horizon_h": horizon_h,
+                        "realized_return": realized,
+                        "hit": hit,
+                    },
+                )
+        except Exception as e:
+            print("Outcome resolution loop error:", e)
+        time.sleep(120)
 
 
 def price_loop() -> None:
@@ -533,38 +970,42 @@ def price_loop() -> None:
 
 def daily_trainer_loop() -> None:
     """
-    Every ~6h: train a Ridge model per coin to predict next-24h return
-    from rolling sentiment features. Models saved to /data/models.
+    Every ~6h: train per-coin Ridge models for 1h/4h/24h horizons,
+    with walk-forward holdout metrics.
     """
     from sklearn.linear_model import Ridge
-    from sklearn.metrics import r2_score
-    import numpy as np  # noqa: F401
+    from sklearn.metrics import mean_absolute_error
+    import numpy as np
     import pandas as pd
 
-    horizon_hours = 24
     while True:
         try:
             print("Trainer: starting pass…")
             for full in TICKER_SYMBOLS:
                 coin = full.replace("USDT", "")
                 try:
-                    # 1) prices
-                    kl = klines_close_prices(full, days=30, interval="1h")
-                    if len(kl) < 48:
+                    kl = klines_close_prices(full, days=45, interval="1h")
+                    if len(kl) < 96:
                         continue
+
                     dfp = pd.DataFrame(kl, columns=["ts", "close"]).set_index("ts")
                     dfp.index = pd.to_datetime(dfp.index)
-                    dfp["ret_next_24h"] = (
-                        dfp["close"].pct_change(periods=horizon_hours).shift(-horizon_hours)
-                    )
+                    dfp["ret_1h"] = dfp["close"].pct_change(1)
+                    dfp["ret_6h"] = dfp["close"].pct_change(6)
+                    dfp["ret_24h"] = dfp["close"].pct_change(24)
+                    dfp["vol_24h"] = dfp["ret_1h"].rolling(24, min_periods=3).std().fillna(0.0)
 
-                    # 2) sentiments -> hourly features
                     since_iso = dfp.index.min().isoformat()
                     with sqlite3.connect(DB_PATH) as db:
                         srows = db.execute(
                             "SELECT ts, score FROM sentiments WHERE coin=? AND ts>=? ORDER BY ts ASC",
                             (coin, since_iso),
                         ).fetchall()
+                        erows = db.execute(
+                            "SELECT ts, features FROM events WHERE coin=? AND ts>=? ORDER BY ts ASC",
+                            (coin, since_iso),
+                        ).fetchall()
+
                     if not srows:
                         continue
 
@@ -573,59 +1014,112 @@ def daily_trainer_loop() -> None:
                     dfs = dfs.resample("1h").mean().fillna(0.0)
                     dfs["ema6"] = dfs["score"].ewm(span=6, adjust=False).mean()
                     dfs["ema24"] = dfs["score"].ewm(span=24, adjust=False).mean()
-                    # rolling count with min_periods=1 so it's never NaN
                     dfs["cnt"] = (dfs["score"] != 0).astype(int).rolling(24, min_periods=1).sum()
 
-                    d = dfp.join(dfs[["ema6", "ema24", "cnt"]], how="left").fillna(0.0)
+                    if erows:
+                        event_rows = []
+                        for ets, fjson in erows:
+                            feat = {}
+                            try:
+                                feat = json.loads(fjson or "{}")
+                            except Exception:
+                                feat = {}
+                            event_rows.append(
+                                {
+                                    "ts": ets,
+                                    "topic_bias": float(feat.get("topic_bias", 0.0)),
+                                    "keyword_hits": float(feat.get("keyword_hits", 0.0)),
+                                    "source_reliability": float(feat.get("source_reliability", 0.5)),
+                                    "novelty": float(feat.get("novelty", 0.5)),
+                                }
+                            )
+                        dfe = pd.DataFrame(event_rows).set_index("ts")
+                        dfe.index = pd.to_datetime(dfe.index)
+                        dfe = dfe.resample("1h").mean().fillna(0.0)
+                    else:
+                        dfe = pd.DataFrame(index=dfs.index)
+                        dfe["topic_bias"] = 0.0
+                        dfe["keyword_hits"] = 0.0
+                        dfe["source_reliability"] = 0.5
+                        dfe["novelty"] = 0.5
 
-                    y = d["ret_next_24h"].dropna()
-                    X = d.loc[y.index, ["ema6", "ema24", "cnt"]]
-                    if len(y) < 48:
-                        continue
+                    d = dfp.join(dfs[["ema6", "ema24", "cnt"]], how="left").join(
+                        dfe[["topic_bias", "keyword_hits", "source_reliability", "novelty"]], how="left"
+                    ).fillna(0.0)
+                    feats = [
+                        "ema6", "ema24", "cnt", "ret_1h", "ret_6h", "ret_24h", "vol_24h",
+                        "topic_bias", "keyword_hits", "source_reliability", "novelty",
+                    ]
 
-                    n = len(y)
-                    split = int(n * 0.8)
-                    Xtr, Xte = X.iloc[:split], X.iloc[split:]
-                    ytr, yte = y.iloc[:split], y.iloc[split:]
-
-                    mdl = Ridge(alpha=0.5).fit(Xtr, ytr)
-                    yhat = mdl.predict(Xte)
-                    r2 = float(r2_score(yte, yhat))
-
-                    art = {
-                        "coin": coin,
-                        "trained_at": datetime.now(timezone.utc).isoformat(),
-                        "horizon_hours": horizon_hours,
-                        "n_samples": int(n),
-                        "r2": r2,
-                        "path": os.path.join(MODEL_DIR, f"{coin}.pkl"),
-                    }
-                    with open(art["path"], "wb") as f:
-                        pickle.dump(mdl, f)
-
-                    with sqlite3.connect(DB_PATH) as db:
-                        db.execute(
-                            "INSERT OR REPLACE INTO models VALUES(?,?,?,?,?,?)",
-                            (
-                                art["coin"],
-                                art["trained_at"],
-                                art["horizon_hours"],
-                                art["n_samples"],
-                                art["r2"],
-                                art["path"],
-                            ),
+                    for horizon_hours in EVENT_HORIZONS:
+                        d[f"ret_next_{horizon_hours}h"] = (
+                            d["close"].pct_change(periods=horizon_hours).shift(-horizon_hours)
                         )
-                    print(f"Trainer: {coin} r2={r2:.3f} n={n}")
+                        y = d[f"ret_next_{horizon_hours}h"].dropna()
+                        X = d.loc[y.index, feats]
+                        if len(y) < 96:
+                            continue
+
+                        n = len(y)
+                        split = int(n * 0.8)
+                        Xtr, Xte = X.iloc[:split], X.iloc[split:]
+                        ytr, yte = y.iloc[:split], y.iloc[split:]
+
+                        mdl = Ridge(alpha=0.8).fit(Xtr, ytr)
+                        yhat = mdl.predict(Xte)
+                        mae = float(mean_absolute_error(yte, yhat))
+                        acc = float(np.mean((yhat >= 0) == (yte.values >= 0)))
+                        baseline = float(np.mean(yte.values >= 0))
+                        score = max(-1.0, min(1.0, (acc - baseline) - mae))
+
+                        art = {
+                            "coin": coin,
+                            "trained_at": datetime.now(timezone.utc).isoformat(),
+                            "horizon_hours": int(horizon_hours),
+                            "n_samples": int(n),
+                            "quality_score": score,
+                            "path": os.path.join(MODEL_DIR, f"{coin}_{horizon_hours}h.pkl"),
+                        }
+                        with open(art["path"], "wb") as f:
+                            pickle.dump({"model": mdl, "features": feats, "version": MODEL_VERSION}, f)
+
+                        with sqlite3.connect(DB_PATH) as db:
+                            db.execute(
+                                """INSERT OR REPLACE INTO models_horizon
+                                   (coin, horizon_hours, trained_at, n_samples, quality_score, path)
+                                   VALUES(?,?,?,?,?,?)""",
+                                (
+                                    art["coin"], art["horizon_hours"], art["trained_at"],
+                                    art["n_samples"], art["quality_score"], art["path"],
+                                ),
+                            )
+                            if horizon_hours == 24:
+                                db.execute(
+                                    "INSERT OR REPLACE INTO models VALUES(?,?,?,?,?,?)",
+                                    (
+                                        art["coin"], art["trained_at"], art["horizon_hours"],
+                                        art["n_samples"], art["quality_score"], art["path"],
+                                    ),
+                                )
+                            db.execute(
+                                """INSERT INTO model_eval
+                                   (ts, coin, model_version, horizon_h, n_test, direction_acc, mae, baseline_acc)
+                                   VALUES(?,?,?,?,?,?,?,?)""",
+                                (
+                                    art["trained_at"], coin, MODEL_VERSION, horizon_hours,
+                                    int(len(yte)), acc, mae, baseline,
+                                ),
+                            )
+                        print(
+                            f"Trainer: {coin} h={horizon_hours} acc={acc:.3f} "
+                            f"mae={mae:.4f} n={n}"
+                        )
                 except Exception as e:
-                    print(f"Trainer: {coin} failed:", e)
+                    print(f"Trainer coin error {coin}:", e)
         except Exception as e:
             print("Trainer loop error:", e)
-        time.sleep(6 * 3600)
 
-
-# =============================================================================
-# FastAPI app + startup
-# =============================================================================
+        time.sleep(6 * 60 * 60)
 app = FastAPI(title="Crypto Intel")
 
 
@@ -639,6 +1133,7 @@ def on_start():
     threading.Thread(target=rss_loop, daemon=True).start()
     threading.Thread(target=alert_generation_loop, daemon=True).start()
     threading.Thread(target=price_loop, daemon=True).start()
+    threading.Thread(target=outcome_resolution_loop, daemon=True).start()
     try:
         threading.Thread(target=daily_trainer_loop, daemon=True).start()
     except NameError:
@@ -705,6 +1200,45 @@ def memory_search(q: str, k: int = 5):
         return {"q": q, "error": str(e), "hits": []}
 
 
+
+
+
+
+@app.get("/debug/runtime")
+def debug_runtime():
+    return {
+        "app_version": VERSION,
+        "model_version": MODEL_VERSION,
+        "started_at": STARTED_AT,
+        "now": datetime.now(timezone.utc).isoformat(),
+    }
+
+@app.get("/debug/model-quality")
+def model_quality(limit: int = 120):
+    with sqlite3.connect(DB_PATH) as db:
+        rows = db.execute(
+            """
+            SELECT ts, coin, model_version, horizon_h, n_test, direction_acc, mae, baseline_acc
+            FROM model_eval
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "ts": r[0],
+            "coin": r[1],
+            "model_version": r[2],
+            "horizon_h": r[3],
+            "n_test": r[4],
+            "direction_acc": r[5],
+            "mae": r[6],
+            "baseline_acc": r[7],
+        }
+        for r in rows
+    ]
+
 @app.get("/news")
 def news_api():
     return JSONResponse(db_get_news(100))
@@ -713,9 +1247,8 @@ def news_api():
 @app.get("/predictions")
 def predictions_api(window_hours: int = 48):
     """
-    Return per-coin prediction based on trained Ridge model if available.
-    Fallback: recent sentiment aggregates -> heuristic.
-    Also logs a prediction metric & drops a memory line.
+    Return per-coin prediction with probability, expected move, confidence,
+    model metadata, and reason codes.
     """
     import numpy as np
     import pandas as pd
@@ -731,86 +1264,143 @@ def predictions_api(window_hours: int = 48):
                 "SELECT ts, score FROM sentiments WHERE coin=? AND ts>=? ORDER BY ts ASC",
                 (coin, since),
             ).fetchall()
+            erows = db.execute(
+                "SELECT features FROM events WHERE coin=? AND ts>=? ORDER BY ts DESC LIMIT 60",
+                (coin, since),
+            ).fetchall()
             sample = len(rows)
 
-            # Aggregate features
             if rows:
                 df = pd.DataFrame(rows, columns=["ts", "score"]).set_index("ts")
                 df.index = pd.to_datetime(df.index)
-                # resample to hourly mean to smooth spikes
                 df = df.resample("1h").mean().fillna(0.0)
-
-                # safe EMA values (even with few samples)
-                ema6_series = df["score"].ewm(span=6, adjust=False).mean()
-                ema24_series = df["score"].ewm(span=24, adjust=False).mean()
-                ema6 = float(ema6_series.iloc[-1]) if len(ema6_series) else 0.0
-                ema24 = float(ema24_series.iloc[-1]) if len(ema24_series) else 0.0
-
-                # rolling count (never NaN thanks to min_periods=1)
-                cnt_val = int(
-                    (df["score"] != 0).astype(int).rolling(24, min_periods=1).sum().iloc[-1]
-                )
+                ema6 = float(df["score"].ewm(span=6, adjust=False).mean().iloc[-1]) if len(df) else 0.0
+                ema24 = float(df["score"].ewm(span=24, adjust=False).mean().iloc[-1]) if len(df) else 0.0
+                cnt_val = int((df["score"] != 0).astype(int).rolling(24, min_periods=1).sum().iloc[-1])
             else:
                 ema6 = ema24 = 0.0
                 cnt_val = 0
 
-            # ML or heuristic
+            topic_bias = keyword_hits = 0.0
+            source_rel_avg = novelty_avg = 0.5
+            if erows:
+                feats = []
+                for (fj,) in erows:
+                    try:
+                        feats.append(json.loads(fj or "{}"))
+                    except Exception:
+                        feats.append({})
+                topic_bias = float(np.mean([f.get("topic_bias", 0.0) for f in feats]))
+                keyword_hits = float(np.mean([f.get("keyword_hits", 0.0) for f in feats]))
+                source_rel_avg = float(np.mean([f.get("source_reliability", 0.5) for f in feats]))
+                novelty_avg = float(np.mean([f.get("novelty", 0.5) for f in feats]))
+
+            market_ret_1h = market_ret_6h = market_ret_24h = market_vol = 0.0
+            try:
+                kl = klines_close_prices(full, days=2, interval="1h")
+                if len(kl) >= 30:
+                    closes = np.array([k[1] for k in kl], dtype=float)
+                    market_ret_1h = float(closes[-1] / closes[-2] - 1.0)
+                    market_ret_6h = float(closes[-1] / closes[-7] - 1.0)
+                    market_ret_24h = float(closes[-1] / closes[-25] - 1.0)
+                    rr = closes[1:] / closes[:-1] - 1.0
+                    market_vol = float(np.std(rr[-24:]))
+            except Exception:
+                pass
+
             pred_val: Optional[float] = None
+            prob_up = 0.5
             conf_rank = "low"
+            conf_score = 0.1
             direction = "up"
-            model_r2: Optional[float] = None
+            model_score: Optional[float] = None
+            reason_codes = [
+                f"sent_ema6={ema6:+.3f}",
+                f"sent_ema24={ema24:+.3f}",
+                f"news_cnt={cnt_val}",
+                f"topic_bias={topic_bias:+.3f}",
+                f"source_rel={source_rel_avg:.2f}",
+                f"novelty={novelty_avg:.2f}",
+            ]
+
+            feature_map = {
+                "ema6": ema6,
+                "ema24": ema24,
+                "cnt": cnt_val,
+                "ret_1h": market_ret_1h,
+                "ret_6h": market_ret_6h,
+                "ret_24h": market_ret_24h,
+                "vol_24h": market_vol,
+                "topic_bias": topic_bias,
+                "keyword_hits": keyword_hits,
+                "source_reliability": source_rel_avg,
+                "novelty": novelty_avg,
+            }
 
             meta = db.execute(
-                "SELECT trained_at, horizon_hours, n_samples, r2, path FROM models WHERE coin=?",
+                "SELECT trained_at, n_samples, quality_score, path FROM models_horizon WHERE coin=? AND horizon_hours=24",
                 (coin,),
             ).fetchone()
 
             if meta:
-                _, _, n_samples, r2, mdl_path = meta
-                model_r2 = r2
+                _, n_samples, quality_score, mdl_path = meta
+                model_score = quality_score
                 try:
                     with open(mdl_path, "rb") as f:
-                        mdl = pickle.load(f)
-                    x = np.array([[ema6, ema24, cnt_val]])
-                    yhat = float(mdl.predict(x)[0])  # next 24h return prediction
+                        obj = pickle.load(f)
+                    if isinstance(obj, dict) and "model" in obj:
+                        mdl = obj["model"]
+                        feats = obj.get("features", ["ema6", "ema24", "cnt"])
+                    else:
+                        mdl = obj
+                        feats = ["ema6", "ema24", "cnt"]
+
+                    x = np.array([[feature_map.get(name, 0.0) for name in feats]], dtype=float)
+                    yhat = float(mdl.predict(x)[0])
                     if not math.isfinite(yhat):
                         raise ValueError("non-finite yhat")
                     pred_val = yhat
-                    mag = abs(yhat)
-                    if mag > 0.025 and (sample >= 6 or n_samples >= 100):
-                        conf_rank = "high"
-                    elif mag > 0.010:
-                        conf_rank = "med"
-                    else:
-                        conf_rank = "low"
-                    direction = "up" if yhat >= 0 else "down"
+                    prob_up = logistic(yhat * 35.0)
+                    conf_score = min(0.99, max(0.05, abs(yhat) * 30.0 + 0.2 * source_rel_avg))
+                    reason_codes.extend([
+                        f"ret_6h={market_ret_6h:+.4f}",
+                        f"ret_24h={market_ret_24h:+.4f}",
+                        f"vol_24h={market_vol:.4f}",
+                    ])
                 except Exception as e:
                     print(f"Predict {coin} failed:", e)
 
             if pred_val is None:
-                # Heuristic fallback
-                s = 0.6 * ema6 + 0.4 * ema24
-                direction = "up" if s >= 0 else "down"
-                mag = abs(s)
-                if mag > 0.40 and sample >= 6:
-                    conf_rank = "high"
-                elif mag > 0.15:
-                    conf_rank = "med"
-                else:
-                    conf_rank = "low"
-                pred_val = float(s * 0.02)
+                s = 0.6 * ema6 + 0.25 * ema24 + 0.15 * topic_bias
+                pred_val = float(s * 0.02 + 0.2 * market_ret_6h + 0.005 * (source_rel_avg - 0.5))
+                prob_up = logistic((ema6 + ema24 + topic_bias + market_ret_6h * 5.0) * 2.0)
+                conf_score = min(0.8, max(0.05, abs(s) + 0.15 * source_rel_avg))
+                reason_codes.append("heuristic-fallback")
+
+            direction = "up" if pred_val >= 0 else "down"
+            if conf_score >= 0.70 and sample >= 6:
+                conf_rank = "high"
+            elif conf_score >= 0.30:
+                conf_rank = "med"
+            else:
+                conf_rank = "low"
 
             out.append(
                 {
                     "symbol": coin,
-                    "direction": direction,  # "up" | "down"
-                    "confidence": conf_rank,  # "high" | "med" | "low"
-                    "score": round(pred_val, 3),
+                    "direction": direction,
+                    "confidence": conf_rank,
+                    "confidence_score": round(conf_score, 3),
+                    "probability_up": round(prob_up, 3),
+                    "expected_move_pct": round(pred_val * 100.0, 3),
+                    "score": round(pred_val, 4),
                     "sample_size": sample,
+                    "model_version": MODEL_VERSION,
+                    "model_quality_score": model_score,
+                    "reason_codes": reason_codes[:8],
                 }
             )
 
-            # Save a metric row
             save_metric(
                 "prediction",
                 now.isoformat(),
@@ -819,32 +1409,43 @@ def predictions_api(window_hours: int = 48):
                     "window_hours": window_hours,
                     "direction": direction,
                     "confidence": conf_rank,
-                    "score": pred_val,
+                    "confidence_score": conf_score,
+                    "probability_up": prob_up,
+                    "expected_move": pred_val,
                     "sample_size": sample,
-                    "model_r2": model_r2,
+                    "model_quality_score": model_score,
+                    "reason_codes": reason_codes[:8],
                 },
             )
 
-            # Drop a memory observation (optional)
             try:
                 if MEM is not None:
-                    # Use the "headline-like" API we defined: add_or_skip(id, text, ts, coins)
                     MEM.add_or_skip(
                         id=f"pred-{coin}-{now.isoformat()}",
-                        text=f"Predicted {direction} ({conf_rank}) with score {pred_val:+.3f} over {window_hours}h",
+                        text=(
+                            f"{coin} {direction} prob={prob_up:.2f} exp={pred_val:+.4f} "
+                            f"conf={conf_rank} reasons={','.join(reason_codes[:3])}"
+                        ),
                         ts=now.isoformat(),
                         coins=[coin],
                     )
             except Exception as me:
                 print("Memory add error (prediction):", me)
 
-    # Sort: confidence first, then magnitude
     out.sort(
-        key=lambda d: ({"high": 2, "med": 1, "low": 0}[d["confidence"]], abs(d["score"])),
+        key=lambda d: (
+            {"high": 2, "med": 1, "low": 0}[d["confidence"]],
+            d["confidence_score"],
+            abs(d["score"]),
+        ),
         reverse=True,
     )
-    return {"asof": now.isoformat(), "window_hours": window_hours, "coins": out}
-
+    return {
+        "asof": now.isoformat(),
+        "window_hours": window_hours,
+        "model_version": MODEL_VERSION,
+        "coins": out,
+    }
 
 
 # =============================================================================
@@ -858,7 +1459,7 @@ def home():
     alerts_month = db_get_alerts_between(w["month"], w["now"])
     alerts_year = db_get_alerts_between(w["year"], w["now"])
     news = db_get_news(30)
-    preds = load_predictions()
+    preds = predictions_api(window_hours=48)
 
     def render_alerts(items: List[dict]) -> str:
         if not items:
@@ -975,6 +1576,10 @@ def home():
     .score{ font-weight:700 }
     .title{ font-weight:600 }
     .meta{ font-size:12px; opacity:.8; margin-top:4px }
+    .muted{ color:var(--muted); font-size:13px }
+    .status-dot{ display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; background:#6b7280; vertical-align:middle }
+    .status-dot.ok{ background:#22c55e }
+    .status-dot.bad{ background:#ef4444 }
     .reasons{ font-size:12px; opacity:.82; margin-top:4px }
     .link{ color:var(--link) }
     .tabs{ display:flex; gap:8px; margin:4px 0 8px 0 }
@@ -1036,6 +1641,82 @@ def home():
       }));
     }
 
+    function renderPredictionsCards(preds){
+      const mount = document.getElementById('predictions-list');
+      if(!mount) return;
+      if(!preds || preds.length===0){
+        mount.innerHTML = '<div class="muted">No predictions yet — gathering data…</div>';
+        return;
+      }
+      let html = '';
+      for(const c of preds){
+        const base = c.symbol;
+        const meta = COIN_META[base] || {icon: base[0], color:'#444'};
+        const arrow = c.direction === 'up' ? '⬆️' : '⬇️';
+        const conf = (c.confidence || 'low');
+        const score = (c.score>=0?'+':'') + Number(c.score||0).toFixed(4);
+        const prob = Math.round((c.probability_up||0.5)*100);
+        const move = (c.expected_move_pct>=0?'+':'') + Number(c.expected_move_pct||0).toFixed(2) + '%';
+        const reasons = (c.reason_codes||[]).slice(0,3).join(' • ');
+        html += `
+          <div class="card pred">
+            <div class="row" style="justify-content:space-between">
+              <div class="row" style="gap:10px">
+                <div class="avatar" style="background:${meta.color}">${meta.icon}</div>
+                <div class="title">${base} ${arrow}</div>
+              </div>
+              <div class="conf ${conf}">${conf.toUpperCase()}</div>
+            </div>
+            <div class="meta">Expected move: <b>${move}</b> • P(up): <b>${prob}%</b></div>
+            <div class="meta">Score: <b>${score}</b> • Sources: ${c.sample_size||0}</div>
+            <div class="reasons">${reasons || 'model inference'}</div>
+          </div>`;
+      }
+      mount.innerHTML = html;
+    }
+
+    function renderModelQuality(rows){
+      const mount = document.getElementById('model-quality');
+      if(!mount) return;
+      if(!rows || rows.length===0){
+        mount.innerHTML = '<div class="muted">No model evaluation rows yet.</div>';
+        return;
+      }
+      const seen = new Set();
+      const top = [];
+      for(const r of rows){
+        if(!r || !r.coin) continue;
+        if(seen.has(r.coin)) continue;
+        seen.add(r.coin);
+        top.push(r);
+        if(top.length >= 8) break;
+      }
+      let html = '';
+      for(const r of top){
+        const acc = (Number(r.direction_acc||0)*100).toFixed(1);
+        const base = (Number(r.baseline_acc||0)*100).toFixed(1);
+        const mae = Number(r.mae||0).toFixed(4);
+        html += `<div class="meta" style="margin-bottom:6px"><b>${r.coin}</b> • Acc ${acc}% (base ${base}%) • MAE ${mae}</div>`;
+      }
+      mount.innerHTML = html || '<div class="muted">No model evaluation rows yet.</div>';
+    }
+
+    function renderInsights(preds){
+      const mount = document.getElementById('prediction-insights');
+      if(!mount) return;
+      if(!preds || preds.length===0){
+        mount.innerHTML = '<div class="muted">Waiting for predictions…</div>';
+        return;
+      }
+      const top = preds[0];
+      const reasons = (top.reason_codes || []).map(r=>`<li>${r}</li>`).join('');
+      mount.innerHTML = `
+        <div class="meta"><b>${top.symbol}</b> ${top.direction==='up'?'⬆️':'⬇️'} • confidence ${(top.confidence||'low').toUpperCase()}</div>
+        <div class="meta">Expected move: <b>${Number(top.expected_move_pct||0).toFixed(2)}%</b></div>
+        <div class="meta">P(up): <b>${Math.round((top.probability_up||0.5)*100)}%</b></div>
+        <ul style="margin:8px 0 0 16px; padding:0">${reasons || '<li>No reason codes.</li>'}</ul>`;
+    }
+
     async function fetchPrices(){
       try{
         const r = await fetch('/prices', {cache:'no-store'});
@@ -1043,10 +1724,73 @@ def home():
       }catch(e){}
     }
 
+    async function fetchPredictions(){
+      try{
+        const r = await fetch('/predictions?window_hours=72', {cache:'no-store'});
+        const payload = await r.json();
+        document.getElementById('model-version').textContent = payload.model_version || 'n/a';
+        document.getElementById('pred-updated').textContent = new Date().toLocaleTimeString();
+        renderPredictionsCards(payload.coins || []);
+        renderInsights(payload.coins || []);
+      }catch(e){}
+    }
+
+    async function fetchModelQuality(){
+      try{
+        const r = await fetch('/debug/model-quality?limit=40', {cache:'no-store'});
+        const rows = await r.json();
+        renderModelQuality(rows || []);
+        const q = document.getElementById('quality-updated');
+        if(q) q.textContent = new Date().toLocaleTimeString();
+      }catch(e){}
+    }
+
+    async function fetchRuntime(){
+      try{
+        const r = await fetch('/debug/runtime', {cache:'no-store'});
+        const rt = await r.json();
+        const av = document.getElementById('app-version');
+        const bs = document.getElementById('backend-started');
+        const mv = document.getElementById('model-version');
+        if(av && rt.app_version) av.textContent = rt.app_version;
+        if(bs && rt.started_at) bs.textContent = new Date(rt.started_at).toLocaleString();
+        if(mv && rt.model_version) mv.textContent = rt.model_version;
+      }catch(e){}
+    }
+
+    async function fetchHealth(){
+      const dot = document.getElementById('health-dot');
+      const txt = document.getElementById('health-text');
+      try{
+        const r = await fetch('/health', {cache:'no-store'});
+        const payload = await r.json();
+        const ok = !!(payload && payload.ok);
+        if(dot){
+          dot.classList.remove('ok','bad');
+          dot.classList.add(ok ? 'ok' : 'bad');
+        }
+        if(txt) txt.textContent = ok ? 'healthy' : 'unhealthy';
+      }catch(e){
+        if(dot){
+          dot.classList.remove('ok');
+          dot.classList.add('bad');
+        }
+        if(txt) txt.textContent = 'offline';
+      }
+    }
+
     window.addEventListener('DOMContentLoaded', ()=>{
       wireTabs();
       fetchPrices();
+      fetchPredictions();
+      fetchModelQuality();
+      fetchRuntime();
+      fetchHealth();
       setInterval(fetchPrices, 12000);
+      setInterval(fetchPredictions, 30000);
+      setInterval(fetchModelQuality, 120000);
+      setInterval(fetchRuntime, 60000);
+      setInterval(fetchHealth, 30000);
     });
   </script>
 </head>
@@ -1067,15 +1811,32 @@ def home():
       __NEWS_HTML__
 
       <h2 id="predictions" class="h2" style="margin-top:18px">📈 Predictions</h2>
-      __PREDS_HTML__
+      <div id="predictions-list">__PREDS_HTML__</div>
     </div>
 
     <div class="right">
-      <h3>Status</h3>
-      <div style="opacity:.8">Local only (127.0.0.1)</div>
-      <div style="opacity:.8">Updates every 5 minutes</div>
-      <div style="opacity:.8">Feeds: __FEEDS_COUNT__</div>
-      <div style="opacity:.8">Version: __APP_VERSION__</div>
+      <h3>AI Status</h3>
+      <div class="card alt" style="margin-top:8px">
+        <div class="meta">Local endpoint: <b>127.0.0.1:8000</b></div>
+        <div class="meta">Feeds: <b>__FEEDS_COUNT__</b></div>
+        <div class="meta">Model version: <b id="model-version">__MODEL_VERSION__</b></div>
+        <div class="meta">App version: <b id="app-version">__APP_VERSION__</b></div>
+        <div class="meta">Backend started: <b id="backend-started">unknown</b></div>
+        <div class="meta">Predictions updated: <b id="pred-updated">initial</b></div>
+        <div class="meta">Model quality updated: <b id="quality-updated">initial</b></div>
+        <div class="meta"><span id="health-dot" class="status-dot"></span>Backend health: <b id="health-text">checking…</b></div>
+      </div>
+
+      <h3 style="margin-top:14px">Model quality (recent)</h3>
+      <div id="model-quality" class="card alt">
+        <div class="muted">Loading model metrics…</div>
+      </div>
+
+      <h3 style="margin-top:14px">Top prediction details</h3>
+      <div id="prediction-insights" class="card alt">
+        <div class="muted">Waiting for predictions…</div>
+      </div>
+
       <div class="footer">
         <div class="ticker"><div id="ticker-track" class="track"></div></div>
       </div>
@@ -1091,6 +1852,8 @@ def home():
         .replace("__FEEDS_COUNT__", str(len(FEEDS)))
         .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
         .replace("__COIN_META__", json.dumps(COIN_META))
+        .replace("__MODEL_VERSION__", MODEL_VERSION)
+        .replace("__APP_VERSION__", VERSION)
     )
     return HTMLResponse(html)
 
