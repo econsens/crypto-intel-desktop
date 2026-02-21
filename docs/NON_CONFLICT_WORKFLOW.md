@@ -69,6 +69,38 @@ git rebase --continue
 
 Repeat until Git says rebase is complete.
 
+## 4.1) Quick fix for the **current** "still conflict" state
+
+If `git status` says **interactive rebase in progress** and shows unmerged paths,
+run this exact sequence:
+
+```powershell
+git status
+git checkout --ours app.py
+git add app.py
+```
+
+If `docs/CHANGELOG.md` is also conflicted:
+
+```powershell
+# edit docs/CHANGELOG.md and remove <<<<<<< ======= >>>>>>>
+git add docs/CHANGELOG.md
+```
+
+Then continue rebase:
+
+```powershell
+git rebase --continue
+```
+
+If another commit conflicts, repeat this section until rebase completes.
+
+> Do not run `git push` before rebase is fully finished.
+
+If Git opens an editor during `rebase --continue`, save and exit to proceed:
+- **Vim**: `Esc`, type `:wq`, press `Enter`.
+- **Nano**: `Ctrl+O`, `Enter`, then `Ctrl+X`.
+
 ## 5) Push rebased branch safely
 
 ```powershell
