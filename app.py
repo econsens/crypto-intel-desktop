@@ -92,6 +92,40 @@ MEM_DIR = os.path.join(DB_DIR, "memory")
 os.makedirs(MEM_DIR, exist_ok=True)
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "assets" / "dashboard_template.html"
+DEFAULT_DASHBOARD_TEMPLATE = """<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"UTF-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+  <title>Crypto Intel Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #0d1117; color: #e6edf3; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px; }
+    h1, h2 { margin-bottom: 10px; }
+    section { margin-top: 24px; }
+    .meta { color: #8b949e; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Crypto Intel Dashboard</h1>
+    <div class=\"meta\">Fallback template active (assets/dashboard_template.html not found). Version: __APP_VERSION__</div>
+    <section>
+      <h2>Predictions</h2>
+      __PREDS_HTML__
+    </section>
+    <section>
+      <h2>Alerts</h2>
+      __ALERTS_SECTIONS__
+    </section>
+    <section>
+      <h2>News</h2>
+      __NEWS_HTML__
+    </section>
+  </main>
+</body>
+</html>
+"""
 
 MEMORY_MODEL = os.getenv("MEMORY_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 MEMORY_LOCAL_ONLY = os.getenv("MEMORY_LOCAL_ONLY", "1") == "1"
@@ -307,9 +341,11 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def db_upsert_event(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
-        db.execute(
+def db_upsert_event(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
+    own_db = db is None
+    dbh = db or sqlite3.connect(DB_PATH)
+    try:
+        dbh.execute(
             """INSERT OR REPLACE INTO events
                (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
                VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -325,11 +361,16 @@ def db_upsert_event(item: dict) -> None:
                 json.dumps(item.get("features", {})),
             ),
         )
+    finally:
+        if own_db:
+            dbh.close()
 
 
-def db_upsert_event_prediction(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
-        db.execute(
+def db_upsert_event_prediction(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
+    own_db = db is None
+    dbh = db or sqlite3.connect(DB_PATH)
+    try:
+        dbh.execute(
             """INSERT OR REPLACE INTO event_predictions
                (event_id, horizon_h, ts, model_version, direction, expected_return,
                 probability_up, confidence, reasons)
@@ -346,6 +387,9 @@ def db_upsert_event_prediction(item: dict) -> None:
                 json.dumps(item.get("reasons", [])),
             ),
         )
+    finally:
+        if own_db:
+            dbh.close()
 
 
 def db_insert_outcome(item: dict) -> None:
@@ -811,7 +855,8 @@ def rss_loop():
                                 "sentiment": sent,
                                 "novelty": pred["feature_map"].get("novelty", 0.5),
                                 "features": pred["feature_map"],
-                            }
+                            },
+                            db=db,
                         )
                         for h in EVENT_HORIZONS:
                             expected_h = predict_horizon_expected(
@@ -841,7 +886,8 @@ def rss_loop():
                                     "probability_up": prob_up_h,
                                     "confidence": pred["confidence"],
                                     "reasons": pred["reasons"] + [f"horizon={h}h"],
-                                }
+                                },
+                                db=db,
                             )
 
                 try:
@@ -1561,7 +1607,10 @@ def home():
 
     preds_html = render_predictions(preds)
 
-    html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    if TEMPLATE_PATH.exists():
+        html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    else:
+        html_template = DEFAULT_DASHBOARD_TEMPLATE
     html = (
         html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
         .replace("__NEWS_HTML__", news_html)
