@@ -11,3 +11,4 @@
 - Dockerfile now copies `assets/` into the image to prevent runtime 500 errors when the dashboard template is missing.
 - Added UI fallback in `app.py` when `assets/dashboard_template.html` is missing, with a clear rebuild hint.
 - Updated conflict docs to require `git pull --ff-only` when a branch is behind before rebasing/pushing.
+- Added `template_exists`/`template_path` to `/debug/runtime` and new `/debug/template` endpoint to diagnose main-page template issues quickly.

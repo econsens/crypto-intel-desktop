@@ -1235,6 +1235,19 @@ def debug_runtime():
         "model_version": MODEL_VERSION,
         "started_at": STARTED_AT,
         "now": datetime.now(timezone.utc).isoformat(),
+        "template_path": str(TEMPLATE_PATH),
+        "template_exists": TEMPLATE_PATH.exists(),
+    }
+
+
+
+@app.get("/debug/template")
+def debug_template():
+    exists = TEMPLATE_PATH.exists()
+    return {
+        "template_path": str(TEMPLATE_PATH),
+        "template_exists": exists,
+        "hint": "Rebuild Docker image after pulling latest code if template is missing.",
     }
 
 @app.get("/debug/model-quality")
