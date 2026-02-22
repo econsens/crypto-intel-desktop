@@ -33,7 +33,7 @@ git rebase origin/main
 If conflict appears in `app.py` and you want to keep your branch version:
 
 ```powershell
-git checkout --ours app.py
+git checkout --theirs app.py
 git add app.py
 git rebase --continue
 ```
