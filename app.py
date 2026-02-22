@@ -64,6 +64,7 @@ VERSION = "1.1.0"
 MODEL_VERSION = "2.1.0"
 STARTED_AT = datetime.now(timezone.utc).isoformat()
 APP_SIGNATURE = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
+STARTUP_ERRORS: List[str] = []
 
 # =============================================================================
 # Phase-2: Semantic Memory (optional)
@@ -1164,20 +1165,31 @@ app = FastAPI(title="Crypto Intel")
 def on_start():
     global MEM
 
-    db_init()
+    def _start_bg(name: str, target):
+        try:
+            threading.Thread(target=target, daemon=True).start()
+        except Exception as e:
+            STARTUP_ERRORS.append(f"{name}: {e}")
+            print(f"Startup thread failed [{name}]", e)
+
+    try:
+        db_init()
+    except Exception as e:
+        STARTUP_ERRORS.append(f"db_init: {e}")
+        print("Startup db_init failed:", e)
 
     # Start background loops
-    threading.Thread(target=rss_loop, daemon=True).start()
-    threading.Thread(target=alert_generation_loop, daemon=True).start()
-    threading.Thread(target=price_loop, daemon=True).start()
-    threading.Thread(target=outcome_resolution_loop, daemon=True).start()
+    _start_bg("rss_loop", rss_loop)
+    _start_bg("alert_generation_loop", alert_generation_loop)
+    _start_bg("price_loop", price_loop)
+    _start_bg("outcome_resolution_loop", outcome_resolution_loop)
     try:
-        threading.Thread(target=daily_trainer_loop, daemon=True).start()
+        _start_bg("daily_trainer_loop", daily_trainer_loop)
     except NameError:
         pass
 
     # Start semantic memory in background (non-blocking startup)
-    threading.Thread(target=init_memory, daemon=True).start()
+    _start_bg("init_memory", init_memory)
 
 
 # =============================================================================
@@ -1190,13 +1202,15 @@ def prices_api():
 @app.get("/health")
 def health():
     return {
-        "ok": True,
+        "ok": len(STARTUP_ERRORS) == 0,
         "version": VERSION,
         "model_version": MODEL_VERSION,
         "template_exists": TEMPLATE_PATH.exists(),
         "debug_template_endpoint": "/debug/template",
         "debug_routes_endpoint": "/debug/routes",
+        "debug_startup_endpoint": "/debug/startup",
         "signature": APP_SIGNATURE,
+        "startup_errors": STARTUP_ERRORS,
     }
 
 @app.get("/version")
@@ -1237,6 +1251,16 @@ def memory_search(q: str, k: int = 5):
 
 
 
+
+
+
+@app.get("/debug/startup")
+def debug_startup():
+    return {
+        "ok": len(STARTUP_ERRORS) == 0,
+        "errors": STARTUP_ERRORS,
+        "started_at": STARTED_AT,
+    }
 
 @app.get("/debug/runtime")
 def debug_runtime():

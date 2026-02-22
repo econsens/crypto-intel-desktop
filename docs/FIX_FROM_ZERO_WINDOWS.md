@@ -50,6 +50,7 @@ curl http://127.0.0.1:8000/debug/runtime
 curl http://127.0.0.1:8000/debug/template
 curl http://127.0.0.1:8000/debug/routes
 curl http://127.0.0.1:8000/debug/signature
+curl http://127.0.0.1:8000/debug/startup
 ```
 
 Expected:
@@ -75,3 +76,13 @@ docker logs --tail 120 crypto-mini
 ```
 
 Share that log output so we can pinpoint the exact error.
+
+
+## First check if container is crashing
+
+```powershell
+docker ps -a
+docker logs --tail 200 crypto-mini
+```
+
+If container status is not `Up`, share the log output.

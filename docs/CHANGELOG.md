@@ -17,3 +17,5 @@
 - Added `/debug/routes` to list active FastAPI paths, making stale-container route mismatches easy to detect.
 - Added `/debug/signature` and included signature/route hints in `/health` to verify running container code version.
 - Updated Windows recovery guide to run from `main` after PR merges and check `/debug/signature`.
+- Startup now captures non-fatal initialization errors instead of crashing the whole app process.
+- Added `/debug/startup` and included `startup_errors` in `/health` for immediate crash-cause visibility.
