@@ -7,3 +7,4 @@
 - Clarified `docs/NON_CONFLICT_WORKFLOW.md` to explain `no rebase in progress`/`rebase complete` states and enforce selecting the exact PR branch before rebasing.
 - Simplified `docs/NON_CONFLICT_WORKFLOW.md` to a short canonical sequence to reduce repeated merge conflicts in overlapping line ranges.
 - Added `scripts/fix_pr_conflict.ps1` and `docs/PR_CONFLICT_ONE_SHOT.md` for one-command PR conflict resolution in PowerShell.
+- Added troubleshooting for missing `scripts/fix_pr_conflict.ps1` in `docs/PR_CONFLICT_ONE_SHOT.md` with a manual fallback flow.
