@@ -1193,7 +1193,13 @@ def prices_api():
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "version": VERSION,
+        "model_version": MODEL_VERSION,
+        "template_exists": TEMPLATE_PATH.exists(),
+        "debug_template_endpoint": "/debug/template",
+    }
 
 @app.get("/version")
 def version():
@@ -1498,64 +1504,39 @@ def home():
         for a in items[:100]:
             rows.append(
                 f"""
-            <div class="card">
-              <div class="row">
-                <div class="pill">{a['coin']}</div>
-                <div class="conf {a['confidence'].lower()}">{a['confidence']}</div>
-                <div class="score">{float(a['score']):+0.2f}</div>
-              </div>
-              <div class="title">{a['title']}</div>
-              <div class="meta"><a class="link" href="{a['url']}">open</a> • {a['ts']}</div>
-              <div class="reasons">{a['reasons']}</div>
+            <div class="card alt">
+              <div class="title">{n.get('title','(no title)')}</div>
+              <div class="meta"><a class="link" href="{n.get('url','#')}">open</a> • {n.get('ts','')}</div>
             </div>
             """
             )
-        return "\n".join(rows)
+        news_html = "\n".join(news_rows) if news_rows else '<div class="muted">Fetching RSS…</div>'
 
-    alerts_sections = f"""
-      <div class="tabs">
-        <button class="tab active" data-pane="pane-day">Day</button>
-        <button class="tab" data-pane="pane-week">Week</button>
-        <button class="tab" data-pane="pane-month">Month</button>
-        <button class="tab" data-pane="pane-year">Year</button>
-      </div>
-      <div id="pane-day" class="pane active">{render_alerts(alerts_day)}</div>
-      <div id="pane-week" class="pane">{render_alerts(alerts_week)}</div>
-      <div id="pane-month" class="pane">{render_alerts(alerts_month)}</div>
-      <div id="pane-year" class="pane">{render_alerts(alerts_year)}</div>
-    """
-
-    news_rows = []
-    for n in news:
-        news_rows.append(
-            f"""
-        <div class="card alt">
-          <div class="title">{n['title']}</div>
-          <div class="meta"><a class="link" href="{n['url']}">open</a> • {n['ts']}</div>
-        </div>
-        """
-        )
-    news_html = "\n".join(news_rows) if news_rows else '<div class="muted">Fetching RSS…</div>'
-
-    def render_predictions(preds_dict: dict) -> str:
-        coins = preds_dict.get("coins", [])
-        if not coins:
-            return '<div class="muted">No predictions yet — gathering data…</div>'
-        cards = []
-        for c in coins:
-            base = c["symbol"]
-            meta = COIN_META.get(base, {"icon": base[:1], "color": "#444"})
-            arrow = "⬆️" if c["direction"] == "up" else "⬇️"
-            conf_cls = {"low": "low", "med": "med", "high": "high"}[c["confidence"]]
-            score = f"{c['score']:+.3f}"
-            sample = c.get("sample_size", 0)
-            cards.append(
-                f"""
-              <div class="card pred">
-                <div class="row" style="justify-content:space-between">
-                  <div class="row" style="gap:10px">
-                    <div class="avatar" style="background:{meta['color']}">{meta['icon']}</div>
-                    <div class="title">{base} {arrow}</div>
+        def render_predictions(preds_dict: dict) -> str:
+            coins = preds_dict.get("coins", []) if isinstance(preds_dict, dict) else []
+            if not coins:
+                return '<div class="muted">No predictions yet — gathering data…</div>'
+            cards = []
+            for c in coins:
+                base = str(c.get("symbol", "?")).upper()
+                meta = COIN_META.get(base, {"icon": base[:1] if base else "?", "color": "#444"})
+                direction = c.get("direction", "up")
+                arrow = "⬆️" if direction == "up" else "⬇️"
+                conf = str(c.get("confidence", "low")).lower()
+                conf_cls = conf if conf in {"low", "med", "high"} else "low"
+                score = float(c.get("score", 0.0) or 0.0)
+                sample = int(c.get("sample_size", 0) or 0)
+                cards.append(
+                    f"""
+                  <div class="card pred">
+                    <div class="row" style="justify-content:space-between">
+                      <div class="row" style="gap:10px">
+                        <div class="avatar" style="background:{meta['color']}">{meta['icon']}</div>
+                        <div class="title">{base} {arrow}</div>
+                      </div>
+                      <div class="conf {conf_cls}">{conf_cls.capitalize()}</div>
+                    </div>
+                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {sample}</div>
                   </div>
                   <div class="conf {conf_cls}">{c['confidence'].capitalize()}</div>
                 </div>
