@@ -12,3 +12,5 @@
 - Added UI fallback in `app.py` when `assets/dashboard_template.html` is missing, with a clear rebuild hint.
 - Updated conflict docs to require `git pull --ff-only` when a branch is behind before rebasing/pushing.
 - Added `template_exists`/`template_path` to `/debug/runtime` and new `/debug/template` endpoint to diagnose main-page template issues quickly.
+- Expanded `/health` payload with `version`, `model_version`, and `template_exists` to quickly detect stale containers.
+- Added `docs/FIX_FROM_ZERO_WINDOWS.md` with beginner-safe copy/paste steps for conflict resolution + Docker redeploy.

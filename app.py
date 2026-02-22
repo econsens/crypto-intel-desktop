@@ -1187,7 +1187,13 @@ def prices_api():
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "version": VERSION,
+        "model_version": MODEL_VERSION,
+        "template_exists": TEMPLATE_PATH.exists(),
+        "debug_template_endpoint": "/debug/template",
+    }
 
 @app.get("/version")
 def version():
