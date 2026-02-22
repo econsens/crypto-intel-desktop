@@ -50,6 +50,7 @@ curl.exe -s http://127.0.0.1:8000/debug/runtime
 curl.exe -s http://127.0.0.1:8000/debug/template
 curl.exe -s http://127.0.0.1:8000/debug/routes
 curl.exe -s http://127.0.0.1:8000/debug/signature
+curl.exe -s http://127.0.0.1:8000/debug/build
 curl.exe -s http://127.0.0.1:8000/debug/startup
 ```
 
@@ -58,6 +59,7 @@ Expected:
 - `/debug/template` exists and returns JSON (not `Not Found`).
 - `/debug/routes` contains `/debug/template` in the listed paths.
 - `/debug/signature` returns a signature (useful to confirm container really changed after rebuild).
+- `/debug/build` (alias) should return the same payload.
 
 ## Step 5) Open browser and hard refresh
 

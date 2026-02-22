@@ -21,3 +21,4 @@
 - Added `/debug/startup` and included `startup_errors` in `/health` for immediate crash-cause visibility.
 - Switched SQLite connections to WAL + busy timeout via `db_connect()` to reduce `database is locked` errors in concurrent loops.
 - Updated Windows diagnostics commands to use `curl.exe -s` to avoid PowerShell Invoke-WebRequest script warnings.
+- Added `/debug/build` and `/signature` aliases for runtime signature diagnostics to improve compatibility across branch versions.

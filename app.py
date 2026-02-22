@@ -1217,6 +1217,7 @@ def health():
         "debug_template_endpoint": "/debug/template",
         "debug_routes_endpoint": "/debug/routes",
         "debug_startup_endpoint": "/debug/startup",
+        "debug_signature_endpoint": "/debug/signature",
         "signature": APP_SIGNATURE,
         "startup_errors": STARTUP_ERRORS,
     }
@@ -1309,6 +1310,16 @@ def debug_signature():
         "model_version": MODEL_VERSION,
         "started_at": STARTED_AT,
     }
+
+@app.get("/signature")
+def signature_alias():
+    return debug_signature()
+
+
+@app.get("/debug/build")
+def debug_build():
+    return debug_signature()
+
 
 @app.get("/debug/model-quality")
 def model_quality(limit: int = 120):
