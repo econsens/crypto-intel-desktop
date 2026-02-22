@@ -45,12 +45,12 @@ docker run -d --name crypto-mini -p 127.0.0.1:8000:8000 -v C:/crypto-intel-data:
 ## Step 4) Verify diagnostics
 
 ```powershell
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/debug/runtime
-curl http://127.0.0.1:8000/debug/template
-curl http://127.0.0.1:8000/debug/routes
-curl http://127.0.0.1:8000/debug/signature
-curl http://127.0.0.1:8000/debug/startup
+curl.exe -s http://127.0.0.1:8000/health
+curl.exe -s http://127.0.0.1:8000/debug/runtime
+curl.exe -s http://127.0.0.1:8000/debug/template
+curl.exe -s http://127.0.0.1:8000/debug/routes
+curl.exe -s http://127.0.0.1:8000/debug/signature
+curl.exe -s http://127.0.0.1:8000/debug/startup
 ```
 
 Expected:
@@ -86,3 +86,6 @@ docker logs --tail 200 crypto-mini
 ```
 
 If container status is not `Up`, share the log output.
+
+
+PowerShell tip: `curl` is an alias to `Invoke-WebRequest` and may show a script warning. Use `curl.exe -s` as above to avoid prompts.

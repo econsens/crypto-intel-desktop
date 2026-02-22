@@ -19,3 +19,5 @@
 - Updated Windows recovery guide to run from `main` after PR merges and check `/debug/signature`.
 - Startup now captures non-fatal initialization errors instead of crashing the whole app process.
 - Added `/debug/startup` and included `startup_errors` in `/health` for immediate crash-cause visibility.
+- Switched SQLite connections to WAL + busy timeout via `db_connect()` to reduce `database is locked` errors in concurrent loops.
+- Updated Windows diagnostics commands to use `curl.exe -s` to avoid PowerShell Invoke-WebRequest script warnings.
