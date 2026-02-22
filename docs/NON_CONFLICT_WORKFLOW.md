@@ -1,36 +1,66 @@
 # Non-Conflict Git Workflow (Windows PowerShell)
 
-Use this exact flow every time before opening/updating a PR.
+This workflow avoids the most common mistakes:
+- typing placeholder names like `YOUR_BRANCH_NAME`;
+- typing two commands on one line;
+- running `git rebase --continue` when no rebase is active;
+- trying to push a different branch than the one the PR uses.
 
-## 1) Start from a clean repo
+## 0) Always run one command per line
+
+Do **not** paste two commands on one line.
+
+✅ Good:
+
+```powershell
+git checkout my-branch
+git rebase origin/main
+```
+
+❌ Bad:
+
+```powershell
+git checkout my-branchgit rebase origin/main
+```
+
+## 1) Identify the exact PR branch first
+
+```powershell
+git fetch origin --prune
+git branch -a
+```
+
+Copy the real PR branch name from GitHub (for example `codex/find-information-on-crypto-intel-x189fq`) and check it out:
+
+```powershell
+git checkout codex/find-information-on-crypto-intel-x189fq
+```
+
+## 2) Set your current branch variable (no placeholders)
+
+```powershell
+$BRANCH = (git branch --show-current).Trim()
+$BRANCH
+```
+
+If this prints empty, stop and run `git checkout <real-branch-name>` first.
+
+## 3) Rebase on latest `main`
+
+```powershell
+git fetch origin --prune
+git rebase origin/main
+```
+
+## 4) If rebase conflicts, resolve and continue
+
+Check conflict files:
 
 ```powershell
 git status
 ```
 
-If you have local edits, either commit them or stash them first.
-
-## 2) Update local references
-
-```powershell
-git fetch origin --prune
-```
-
-## 3) Switch to your PR branch
-
-```powershell
-git checkout YOUR_BRANCH_NAME
-```
-
-> Do not use `< >` in commands.
-
-## 4) Rebase your branch on latest `main`
-
-```powershell
-git rebase origin/main
-```
-
-If conflict appears in `app.py` and you want to keep your branch version:
+### 4a) Conflict in `app.py` (keep your branch copy)
 
 ```powershell
 git checkout --ours app.py
@@ -38,38 +68,57 @@ git add app.py
 git rebase --continue
 ```
 
-Repeat those 3 lines until rebase completes.
+### 4b) Conflict in `docs/CHANGELOG.md`
 
-## 5) Push safely after rebase
+Fast path (keep current branch version):
 
 ```powershell
-git push --force-with-lease origin YOUR_BRANCH_NAME
+git checkout --ours docs/CHANGELOG.md
+git add docs/CHANGELOG.md
+git rebase --continue
 ```
 
-## 6) Verify branch is clean
+Manual path (if you need both sides):
+1. Open `docs/CHANGELOG.md`.
+2. Remove `<<<<<<<`, `=======`, `>>>>>>>` markers.
+3. Keep valid bullets.
+4. Save file, then run:
+
+```powershell
+git add docs/CHANGELOG.md
+git rebase --continue
+```
+
+Repeat until Git says rebase is complete.
+
+## 5) Important status meanings
+
+### A) `fatal: no rebase in progress`
+This is **not** a new conflict. It means you already finished (or were never in) a rebase. Next step is push.
+
+### B) `Successfully rebased and updated refs/heads/...`
+Rebase is done. Do **not** run conflict commands after this line. Just push.
+
+### C) `interactive rebase in progress` in `git status`
+Rebase is still active. Keep resolving conflicts + `git rebase --continue`.
+
+## 6) Push rebased branch safely
+
+```powershell
+git push --force-with-lease origin $BRANCH
+```
+
+## 7) Final check
 
 ```powershell
 git status
 ```
 
-You should see: `nothing to commit, working tree clean`.
+You want: `nothing to commit, working tree clean`.
 
 ---
 
-## Daily short version (copy/paste)
-
-```powershell
-git fetch origin --prune
-git checkout YOUR_BRANCH_NAME
-git rebase origin/main
-git push --force-with-lease origin YOUR_BRANCH_NAME
-```
-
----
-
-## Optional: if rebase gets messy
-
-Abort and restart cleanly:
+## Emergency reset if you get stuck
 
 ```powershell
 git rebase --abort
