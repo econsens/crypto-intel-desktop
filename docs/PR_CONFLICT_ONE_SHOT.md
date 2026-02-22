@@ -16,6 +16,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\fix_pr_conflict.ps1 -Branch "
 
 ## Option B: manual exact commands (works even if script file is missing)
 
+
+## Important: if branch is "behind" remote, update first
+
+If `git status` says your local branch is behind origin, run:
+
+```powershell
+git pull --ff-only
+```
+
+Then continue with rebase/resolve steps. This prevents accidentally force-pushing older history back to GitHub.
+
 ```powershell
 git fetch origin --prune
 git checkout <your-pr-branch>

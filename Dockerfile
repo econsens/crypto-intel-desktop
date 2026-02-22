@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 # app.py is your main FastAPI app; ml_memory.py is the MiniLM/FAISS wrapper we added in Phase 2
 COPY app.py /app/app.py
 COPY ml_memory.py /app/ml_memory.py
+COPY assets /app/assets
 
 # --- Data dirs (persisted via -v …:/data when you run)
 # /data           -> database, predictions.json

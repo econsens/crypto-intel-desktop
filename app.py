@@ -1561,7 +1561,10 @@ def home():
 
     preds_html = render_predictions(preds)
 
-    html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    if TEMPLATE_PATH.exists():
+        html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    else:
+        html_template = """<!doctype html><html><head><meta charset=\"utf-8\"><title>Crypto Intel</title></head><body style=\"font-family:Arial;background:#0b1220;color:#e5e7eb;padding:16px\"><h3>Crypto Intel</h3><p>Dashboard template missing at /app/assets/dashboard_template.html.</p><p>Please rebuild Docker image with assets copied (Dockerfile now includes <code>COPY assets /app/assets</code>).</p><h4>Predictions</h4>__PREDS_HTML__</body></html>"""
     html = (
         html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
         .replace("__NEWS_HTML__", news_html)

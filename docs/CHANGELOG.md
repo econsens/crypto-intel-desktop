@@ -8,3 +8,6 @@
 - Simplified `docs/NON_CONFLICT_WORKFLOW.md` to a short canonical sequence to reduce repeated merge conflicts in overlapping line ranges.
 - Added `scripts/fix_pr_conflict.ps1` and `docs/PR_CONFLICT_ONE_SHOT.md` for one-command PR conflict resolution in PowerShell.
 - Added troubleshooting for missing `scripts/fix_pr_conflict.ps1` in `docs/PR_CONFLICT_ONE_SHOT.md` with a manual fallback flow.
+- Dockerfile now copies `assets/` into the image to prevent runtime 500 errors when the dashboard template is missing.
+- Added UI fallback in `app.py` when `assets/dashboard_template.html` is missing, with a clear rebuild hint.
+- Updated conflict docs to require `git pull --ff-only` when a branch is behind before rebasing/pushing.
