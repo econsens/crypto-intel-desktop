@@ -283,45 +283,49 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def db_upsert_event(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
-        db.execute(
-            """INSERT OR REPLACE INTO events
+def db_upsert_event(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
+    query = """INSERT OR REPLACE INTO events
                (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (
-                item["id"],
-                item["nid"],
-                item["coin"],
-                item["ts"],
-                item["title"],
-                item["source_url"],
-                float(item["sentiment"]),
-                float(item["novelty"]),
-                json.dumps(item.get("features", {})),
-            ),
-        )
+               VALUES(?,?,?,?,?,?,?,?,?)"""
+    params = (
+        item["id"],
+        item["nid"],
+        item["coin"],
+        item["ts"],
+        item["title"],
+        item["source_url"],
+        float(item["sentiment"]),
+        float(item["novelty"]),
+        json.dumps(item.get("features", {})),
+    )
+    if db is None:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(query, params)
+        return
+    db.execute(query, params)
 
 
-def db_upsert_event_prediction(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
-        db.execute(
-            """INSERT OR REPLACE INTO event_predictions
+def db_upsert_event_prediction(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
+    query = """INSERT OR REPLACE INTO event_predictions
                (event_id, horizon_h, ts, model_version, direction, expected_return,
                 probability_up, confidence, reasons)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (
-                item["event_id"],
-                int(item["horizon_h"]),
-                item["ts"],
-                item["model_version"],
-                item["direction"],
-                float(item["expected_return"]),
-                float(item["probability_up"]),
-                float(item["confidence"]),
-                json.dumps(item.get("reasons", [])),
-            ),
-        )
+               VALUES(?,?,?,?,?,?,?,?,?)"""
+    params = (
+        item["event_id"],
+        int(item["horizon_h"]),
+        item["ts"],
+        item["model_version"],
+        item["direction"],
+        float(item["expected_return"]),
+        float(item["probability_up"]),
+        float(item["confidence"]),
+        json.dumps(item.get("reasons", [])),
+    )
+    if db is None:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(query, params)
+        return
+    db.execute(query, params)
 
 
 def db_insert_outcome(item: dict) -> None:
@@ -672,7 +676,8 @@ def rss_loop():
                                 "sentiment": sent,
                                 "novelty": 1.0,
                                 "features": pred["feature_map"],
-                            }
+                            },
+                            db=db,
                         )
                         for h in EVENT_HORIZONS:
                             db_upsert_event_prediction(
@@ -686,7 +691,8 @@ def rss_loop():
                                     "probability_up": pred["probability_up"],
                                     "confidence": pred["confidence"],
                                     "reasons": pred["reasons"],
-                                }
+                                },
+                                db=db,
                             )
 
                 try:
