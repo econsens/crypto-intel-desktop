@@ -304,8 +304,11 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def db_upsert_event(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+def db_upsert_event(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
+    owns_connection = db is None
+    if owns_connection:
+        db = sqlite3.connect(DB_PATH)
+    try:
         db.execute(
             """INSERT OR REPLACE INTO events
                (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
@@ -322,10 +325,18 @@ def db_upsert_event(item: dict) -> None:
                 json.dumps(item.get("features", {})),
             ),
         )
+        if owns_connection:
+            db.commit()
+    finally:
+        if owns_connection:
+            db.close()
 
 
-def db_upsert_event_prediction(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+def db_upsert_event_prediction(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
+    owns_connection = db is None
+    if owns_connection:
+        db = sqlite3.connect(DB_PATH)
+    try:
         db.execute(
             """INSERT OR REPLACE INTO event_predictions
                (event_id, horizon_h, ts, model_version, direction, expected_return,
@@ -343,6 +354,11 @@ def db_upsert_event_prediction(item: dict) -> None:
                 json.dumps(item.get("reasons", [])),
             ),
         )
+        if owns_connection:
+            db.commit()
+    finally:
+        if owns_connection:
+            db.close()
 
 
 def db_insert_outcome(item: dict) -> None:
@@ -808,7 +824,8 @@ def rss_loop():
                                 "sentiment": sent,
                                 "novelty": pred["feature_map"].get("novelty", 0.5),
                                 "features": pred["feature_map"],
-                            }
+                            },
+                            db=db,
                         )
                         for h in EVENT_HORIZONS:
                             expected_h = predict_horizon_expected(
@@ -838,7 +855,8 @@ def rss_loop():
                                     "probability_up": prob_up_h,
                                     "confidence": pred["confidence"],
                                     "reasons": pred["reasons"] + [f"horizon={h}h"],
-                                }
+                                },
+                                db=db,
                             )
 
                 try:
