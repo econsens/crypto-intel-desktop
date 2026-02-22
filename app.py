@@ -1477,105 +1477,126 @@ def predictions_api(window_hours: int = 48):
 # =============================================================================
 @app.get("/", response_class=HTMLResponse)
 def home():
-    w = window_ends()
-    alerts_day = db_get_alerts_between(w["day"], w["now"])
-    alerts_week = db_get_alerts_between(w["week"], w["now"])
-    alerts_month = db_get_alerts_between(w["month"], w["now"])
-    alerts_year = db_get_alerts_between(w["year"], w["now"])
-    news = db_get_news(30)
-    preds = predictions_api(window_hours=48)
+    try:
+        w = window_ends()
+        alerts_day = db_get_alerts_between(w["day"], w["now"])
+        alerts_week = db_get_alerts_between(w["week"], w["now"])
+        alerts_month = db_get_alerts_between(w["month"], w["now"])
+        alerts_year = db_get_alerts_between(w["year"], w["now"])
+        news = db_get_news(30)
+        preds = predictions_api(window_hours=48)
 
-    def render_alerts(items: List[dict]) -> str:
-        if not items:
-            return '<div class="muted">No alerts in this period yet.</div>'
-        rows = []
-        for a in items[:100]:
-            rows.append(
+        def render_alerts(items: List[dict]) -> str:
+            if not items:
+                return '<div class="muted">No alerts in this period yet.</div>'
+            rows = []
+            for a in items[:100]:
+                coin = a.get("coin", "N/A")
+                conf = str(a.get("confidence", "low")).lower()
+                conf = conf if conf in {"low", "med", "high"} else "low"
+                score = float(a.get("score", 0.0) or 0.0)
+                title = a.get("title", "(no title)")
+                url = a.get("url", "#")
+                ts = a.get("ts", "")
+                reasons = a.get("reasons", "")
+                rows.append(
+                    f"""
+                <div class="card">
+                  <div class="row">
+                    <div class="pill">{coin}</div>
+                    <div class="conf {conf}">{conf.upper()}</div>
+                    <div class="score">{score:+0.2f}</div>
+                  </div>
+                  <div class="title">{title}</div>
+                  <div class="meta"><a class="link" href="{url}">open</a> • {ts}</div>
+                  <div class="reasons">{reasons}</div>
+                </div>
+                """
+                )
+            return "\n".join(rows)
+
+        alerts_sections = f"""
+          <div class="tabs">
+            <button class="tab active" data-pane="pane-day">Day</button>
+            <button class="tab" data-pane="pane-week">Week</button>
+            <button class="tab" data-pane="pane-month">Month</button>
+            <button class="tab" data-pane="pane-year">Year</button>
+          </div>
+          <div id="pane-day" class="pane active">{render_alerts(alerts_day)}</div>
+          <div id="pane-week" class="pane">{render_alerts(alerts_week)}</div>
+          <div id="pane-month" class="pane">{render_alerts(alerts_month)}</div>
+          <div id="pane-year" class="pane">{render_alerts(alerts_year)}</div>
+        """
+
+        news_rows = []
+        for n in news:
+            news_rows.append(
                 f"""
-            <div class="card">
-              <div class="row">
-                <div class="pill">{a['coin']}</div>
-                <div class="conf {a['confidence'].lower()}">{a['confidence']}</div>
-                <div class="score">{float(a['score']):+0.2f}</div>
-              </div>
-              <div class="title">{a['title']}</div>
-              <div class="meta"><a class="link" href="{a['url']}">open</a> • {a['ts']}</div>
-              <div class="reasons">{a['reasons']}</div>
+            <div class="card alt">
+              <div class="title">{n.get('title','(no title)')}</div>
+              <div class="meta"><a class="link" href="{n.get('url','#')}">open</a> • {n.get('ts','')}</div>
             </div>
             """
             )
-        return "\n".join(rows)
+        news_html = "\n".join(news_rows) if news_rows else '<div class="muted">Fetching RSS…</div>'
 
-    alerts_sections = f"""
-      <div class="tabs">
-        <button class="tab active" data-pane="pane-day">Day</button>
-        <button class="tab" data-pane="pane-week">Week</button>
-        <button class="tab" data-pane="pane-month">Month</button>
-        <button class="tab" data-pane="pane-year">Year</button>
-      </div>
-      <div id="pane-day" class="pane active">{render_alerts(alerts_day)}</div>
-      <div id="pane-week" class="pane">{render_alerts(alerts_week)}</div>
-      <div id="pane-month" class="pane">{render_alerts(alerts_month)}</div>
-      <div id="pane-year" class="pane">{render_alerts(alerts_year)}</div>
-    """
-
-    news_rows = []
-    for n in news:
-        news_rows.append(
-            f"""
-        <div class="card alt">
-          <div class="title">{n['title']}</div>
-          <div class="meta"><a class="link" href="{n['url']}">open</a> • {n['ts']}</div>
-        </div>
-        """
-        )
-    news_html = "\n".join(news_rows) if news_rows else '<div class="muted">Fetching RSS…</div>'
-
-    def render_predictions(preds_dict: dict) -> str:
-        coins = preds_dict.get("coins", [])
-        if not coins:
-            return '<div class="muted">No predictions yet — gathering data…</div>'
-        cards = []
-        for c in coins:
-            base = c["symbol"]
-            meta = COIN_META.get(base, {"icon": base[:1], "color": "#444"})
-            arrow = "⬆️" if c["direction"] == "up" else "⬇️"
-            conf_cls = {"low": "low", "med": "med", "high": "high"}[c["confidence"]]
-            score = f"{c['score']:+.3f}"
-            sample = c.get("sample_size", 0)
-            cards.append(
-                f"""
-              <div class="card pred">
-                <div class="row" style="justify-content:space-between">
-                  <div class="row" style="gap:10px">
-                    <div class="avatar" style="background:{meta['color']}">{meta['icon']}</div>
-                    <div class="title">{base} {arrow}</div>
+        def render_predictions(preds_dict: dict) -> str:
+            coins = preds_dict.get("coins", []) if isinstance(preds_dict, dict) else []
+            if not coins:
+                return '<div class="muted">No predictions yet — gathering data…</div>'
+            cards = []
+            for c in coins:
+                base = str(c.get("symbol", "?")).upper()
+                meta = COIN_META.get(base, {"icon": base[:1] if base else "?", "color": "#444"})
+                direction = c.get("direction", "up")
+                arrow = "⬆️" if direction == "up" else "⬇️"
+                conf = str(c.get("confidence", "low")).lower()
+                conf_cls = conf if conf in {"low", "med", "high"} else "low"
+                score = float(c.get("score", 0.0) or 0.0)
+                sample = int(c.get("sample_size", 0) or 0)
+                cards.append(
+                    f"""
+                  <div class="card pred">
+                    <div class="row" style="justify-content:space-between">
+                      <div class="row" style="gap:10px">
+                        <div class="avatar" style="background:{meta['color']}">{meta['icon']}</div>
+                        <div class="title">{base} {arrow}</div>
+                      </div>
+                      <div class="conf {conf_cls}">{conf_cls.capitalize()}</div>
+                    </div>
+                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {sample}</div>
                   </div>
-                  <div class="conf {conf_cls}">{c['confidence'].capitalize()}</div>
-                </div>
-                <div class="meta">Score: <b>{score}</b> • Sources: {sample}</div>
-              </div>
-            """
-            )
-        return "\n".join(cards)
+                """
+                )
+            return "\n".join(cards)
 
-    preds_html = render_predictions(preds)
+        preds_html = render_predictions(preds)
 
-    if TEMPLATE_PATH.exists():
-        html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    else:
-        html_template = """<!doctype html><html><head><meta charset=\"utf-8\"><title>Crypto Intel</title></head><body style=\"font-family:Arial;background:#0b1220;color:#e5e7eb;padding:16px\"><h3>Crypto Intel</h3><p>Dashboard template missing at /app/assets/dashboard_template.html.</p><p>Please rebuild Docker image with assets copied (Dockerfile now includes <code>COPY assets /app/assets</code>).</p><h4>Predictions</h4>__PREDS_HTML__</body></html>"""
-    html = (
-        html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
-        .replace("__NEWS_HTML__", news_html)
-        .replace("__PREDS_HTML__", preds_html)
-        .replace("__FEEDS_COUNT__", str(len(FEEDS)))
-        .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
-        .replace("__COIN_META__", json.dumps(COIN_META))
-        .replace("__MODEL_VERSION__", MODEL_VERSION)
-        .replace("__APP_VERSION__", VERSION)
-    )
-    return HTMLResponse(html)
+        if TEMPLATE_PATH.exists():
+            html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
+        else:
+            html_template = """<!doctype html><html><head><meta charset="utf-8"><title>Crypto Intel</title></head><body style="font-family:Arial;background:#0b1220;color:#e5e7eb;padding:16px"><h3>Crypto Intel</h3><p>Dashboard template missing at /app/assets/dashboard_template.html.</p><p>Please rebuild Docker image with assets copied (Dockerfile now includes <code>COPY assets /app/assets</code>).</p><h4>Predictions</h4>__PREDS_HTML__</body></html>"""
+
+        html = (
+            html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
+            .replace("__NEWS_HTML__", news_html)
+            .replace("__PREDS_HTML__", preds_html)
+            .replace("__FEEDS_COUNT__", str(len(FEEDS)))
+            .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
+            .replace("__COIN_META__", json.dumps(COIN_META))
+            .replace("__MODEL_VERSION__", MODEL_VERSION)
+            .replace("__APP_VERSION__", VERSION)
+        )
+        return HTMLResponse(html)
+    except Exception as e:
+        fallback = (
+            '<!doctype html><html><head><meta charset="utf-8"><title>Crypto Intel</title></head>'
+            '<body style="font-family:Arial;background:#0b1220;color:#e5e7eb;padding:16px">'
+            '<h3>Crypto Intel</h3><p>Main page recovered from an internal error.</p>'
+            f'<pre style="white-space:pre-wrap">{str(e)}</pre>'
+            '<p>Check container logs and rebuild image if needed.</p></body></html>'
+        )
+        return HTMLResponse(fallback)
 
 
 # =============================================================================
