@@ -47,11 +47,13 @@ docker run -d --name crypto-mini -p 127.0.0.1:8000:8000 -v C:/crypto-intel-data:
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/debug/runtime
 curl http://127.0.0.1:8000/debug/template
+curl http://127.0.0.1:8000/debug/routes
 ```
 
 Expected:
 - `/health` includes `version` and `template_exists`.
 - `/debug/template` exists and returns JSON (not `Not Found`).
+- `/debug/routes` contains `/debug/template` in the listed paths.
 
 ## Step 5) Open browser and hard refresh
 

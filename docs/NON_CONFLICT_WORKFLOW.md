@@ -1,56 +1,32 @@
 # Non-Conflict Git Workflow (Windows PowerShell)
 
-This workflow avoids the two most common mistakes we saw:
-- typing placeholder names like `YOUR_BRANCH_NAME`;
-- getting stuck in an in-progress rebase with `docs/CHANGELOG.md` conflicts.
+Use this exact flow to avoid recurring PR conflicts.
 
-## 0) Always run one command per line
-
-Do **not** paste two commands on one line.
-
-✅ Good:
-
-```powershell
-git checkout my-branch
-git rebase origin/main
-```
-
-❌ Bad:
-
-```powershell
-git checkout my-branchgit rebase origin/main
-```
-
-## 1) Set your branch name once (no placeholders)
-
-```powershell
-$BRANCH = (git branch --show-current).Trim()
-$BRANCH
-```
-
-If this prints empty, stop and run `git checkout <your-branch>` first.
-
-## 2) Sync remote refs
+## 1) Use the real PR branch name (never placeholders)
 
 ```powershell
 git fetch origin --prune
+git branch -a
+git checkout <real-pr-branch-name>
+$BRANCH = (git branch --show-current).Trim()
 ```
 
-## 3) Rebase your current branch on latest `main`
+## 2) Rebase on latest main
 
 ```powershell
+git fetch origin --prune
 git rebase origin/main
 ```
 
-## 4) If rebase conflicts, resolve and continue
+## 3) If conflicts appear, resolve and continue
 
-Check which files are conflicted:
+Check current state:
 
 ```powershell
 git status
 ```
 
-### 4a) Conflict in `app.py` (keep your branch copy)
+### Conflict in `app.py` (keep your branch version)
 
 ```powershell
 git checkout --ours app.py
@@ -58,50 +34,32 @@ git add app.py
 git rebase --continue
 ```
 
-### 4b) Conflict in `docs/CHANGELOG.md`
+### Conflict in `docs/CHANGELOG.md`
 
-Open the file, remove conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), keep both valid changelog bullets, then:
+Quick path:
+
+```powershell
+git checkout --ours docs/CHANGELOG.md
+git add docs/CHANGELOG.md
+git rebase --continue
+```
+
+Manual path (only if you need both sides): remove conflict markers, keep valid bullets, then:
 
 ```powershell
 git add docs/CHANGELOG.md
 git rebase --continue
 ```
 
-Repeat until Git says rebase is complete.
+Repeat conflict resolution until rebase completes.
 
-## 4.1) Quick fix for the **current** "still conflict" state
+## 4) Understand status messages
 
-If `git status` says **interactive rebase in progress** and shows unmerged paths,
-run this exact sequence:
+- `Successfully rebased and updated refs/heads/...` → rebase is done; push next.
+- `fatal: no rebase in progress` → no active rebase; push or start rebase.
+- `interactive rebase in progress` in `git status` → keep resolving and running `git rebase --continue`.
 
-```powershell
-git status
-git checkout --ours app.py
-git add app.py
-```
-
-If `docs/CHANGELOG.md` is also conflicted:
-
-```powershell
-# edit docs/CHANGELOG.md and remove <<<<<<< ======= >>>>>>>
-git add docs/CHANGELOG.md
-```
-
-Then continue rebase:
-
-```powershell
-git rebase --continue
-```
-
-If another commit conflicts, repeat this section until rebase completes.
-
-> Do not run `git push` before rebase is fully finished.
-
-If Git opens an editor during `rebase --continue`, save and exit to proceed:
-- **Vim**: `Esc`, type `:wq`, press `Enter`.
-- **Nano**: `Ctrl+O`, `Enter`, then `Ctrl+X`.
-
-## 5) Push rebased branch safely
+## 5) Push safely after rebase
 
 ```powershell
 git push --force-with-lease origin $BRANCH
@@ -113,11 +71,9 @@ git push --force-with-lease origin $BRANCH
 git status
 ```
 
-You want: `nothing to commit, working tree clean`.
+Expected: `nothing to commit, working tree clean`.
 
----
-
-## Emergency reset if you get stuck
+## Emergency reset
 
 ```powershell
 git rebase --abort

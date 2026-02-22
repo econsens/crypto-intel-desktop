@@ -307,12 +307,8 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def db_upsert_event(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
-    owns_connection = db is None
-    if db is None:
-        db = sqlite3.connect(DB_PATH)
-
-    try:
+def db_upsert_event(item: dict) -> None:
+    with sqlite3.connect(DB_PATH) as db:
         db.execute(
             """INSERT OR REPLACE INTO events
                (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
@@ -329,19 +325,10 @@ def db_upsert_event(item: dict, db: Optional[sqlite3.Connection] = None) -> None
                 json.dumps(item.get("features", {})),
             ),
         )
-        if owns_connection:
-            db.commit()
-    finally:
-        if owns_connection:
-            db.close()
 
 
-def db_upsert_event_prediction(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
-    owns_connection = db is None
-    if db is None:
-        db = sqlite3.connect(DB_PATH)
-
-    try:
+def db_upsert_event_prediction(item: dict) -> None:
+    with sqlite3.connect(DB_PATH) as db:
         db.execute(
             """INSERT OR REPLACE INTO event_predictions
                (event_id, horizon_h, ts, model_version, direction, expected_return,
@@ -359,11 +346,6 @@ def db_upsert_event_prediction(item: dict, db: Optional[sqlite3.Connection] = No
                 json.dumps(item.get("reasons", [])),
             ),
         )
-        if owns_connection:
-            db.commit()
-    finally:
-        if owns_connection:
-            db.close()
 
 
 def db_insert_outcome(item: dict) -> None:
@@ -829,8 +811,7 @@ def rss_loop():
                                 "sentiment": sent,
                                 "novelty": pred["feature_map"].get("novelty", 0.5),
                                 "features": pred["feature_map"],
-                            },
-                            db=db,
+                            }
                         )
                         for h in EVENT_HORIZONS:
                             expected_h = predict_horizon_expected(
@@ -860,8 +841,7 @@ def rss_loop():
                                     "probability_up": prob_up_h,
                                     "confidence": pred["confidence"],
                                     "reasons": pred["reasons"] + [f"horizon={h}h"],
-                                },
-                                db=db,
+                                }
                             )
 
                 try:
@@ -1261,7 +1241,27 @@ def debug_runtime():
         "model_version": MODEL_VERSION,
         "started_at": STARTED_AT,
         "now": datetime.now(timezone.utc).isoformat(),
+        "template_path": str(TEMPLATE_PATH),
+        "template_exists": TEMPLATE_PATH.exists(),
     }
+
+
+
+@app.get("/debug/template")
+def debug_template():
+    exists = TEMPLATE_PATH.exists()
+    return {
+        "template_path": str(TEMPLATE_PATH),
+        "template_exists": exists,
+        "hint": "Rebuild Docker image after pulling latest code if template is missing.",
+    }
+
+
+
+@app.get("/debug/routes")
+def debug_routes():
+    paths = sorted({r.path for r in app.routes})
+    return {"count": len(paths), "paths": paths}
 
 @app.get("/debug/model-quality")
 def model_quality(limit: int = 120):
@@ -1503,20 +1503,60 @@ def predictions_api(window_hours: int = 48):
 # =============================================================================
 @app.get("/", response_class=HTMLResponse)
 def home():
-    w = window_ends()
-    alerts_day = db_get_alerts_between(w["day"], w["now"])
-    alerts_week = db_get_alerts_between(w["week"], w["now"])
-    alerts_month = db_get_alerts_between(w["month"], w["now"])
-    alerts_year = db_get_alerts_between(w["year"], w["now"])
-    news = db_get_news(30)
-    preds = predictions_api(window_hours=48)
+    try:
+        w = window_ends()
+        alerts_day = db_get_alerts_between(w["day"], w["now"])
+        alerts_week = db_get_alerts_between(w["week"], w["now"])
+        alerts_month = db_get_alerts_between(w["month"], w["now"])
+        alerts_year = db_get_alerts_between(w["year"], w["now"])
+        news = db_get_news(30)
+        preds = predictions_api(window_hours=48)
 
-    def render_alerts(items: List[dict]) -> str:
-        if not items:
-            return '<div class="muted">No alerts in this period yet.</div>'
-        rows = []
-        for a in items[:100]:
-            rows.append(
+        def render_alerts(items: List[dict]) -> str:
+            if not items:
+                return '<div class="muted">No alerts in this period yet.</div>'
+            rows = []
+            for a in items[:100]:
+                coin = a.get("coin", "N/A")
+                conf = str(a.get("confidence", "low")).lower()
+                conf = conf if conf in {"low", "med", "high"} else "low"
+                score = float(a.get("score", 0.0) or 0.0)
+                title = a.get("title", "(no title)")
+                url = a.get("url", "#")
+                ts = a.get("ts", "")
+                reasons = a.get("reasons", "")
+                rows.append(
+                    f"""
+                <div class="card">
+                  <div class="row">
+                    <div class="pill">{coin}</div>
+                    <div class="conf {conf}">{conf.upper()}</div>
+                    <div class="score">{score:+0.2f}</div>
+                  </div>
+                  <div class="title">{title}</div>
+                  <div class="meta"><a class="link" href="{url}">open</a> • {ts}</div>
+                  <div class="reasons">{reasons}</div>
+                </div>
+                """
+                )
+            return "\n".join(rows)
+
+        alerts_sections = f"""
+          <div class="tabs">
+            <button class="tab active" data-pane="pane-day">Day</button>
+            <button class="tab" data-pane="pane-week">Week</button>
+            <button class="tab" data-pane="pane-month">Month</button>
+            <button class="tab" data-pane="pane-year">Year</button>
+          </div>
+          <div id="pane-day" class="pane active">{render_alerts(alerts_day)}</div>
+          <div id="pane-week" class="pane">{render_alerts(alerts_week)}</div>
+          <div id="pane-month" class="pane">{render_alerts(alerts_month)}</div>
+          <div id="pane-year" class="pane">{render_alerts(alerts_year)}</div>
+        """
+
+        news_rows = []
+        for n in news:
+            news_rows.append(
                 f"""
             <div class="card alt">
               <div class="title">{n.get('title','(no title)')}</div>
@@ -1552,28 +1592,37 @@ def home():
                     </div>
                     <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {sample}</div>
                   </div>
-                  <div class="conf {conf_cls}">{c['confidence'].capitalize()}</div>
-                </div>
-                <div class="meta">Score: <b>{score}</b> • Sources: {sample}</div>
-              </div>
-            """
-            )
-        return "\n".join(cards)
+                """
+                )
+            return "\n".join(cards)
 
-    preds_html = render_predictions(preds)
+        preds_html = render_predictions(preds)
 
-    html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    html = (
-        html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
-        .replace("__NEWS_HTML__", news_html)
-        .replace("__PREDS_HTML__", preds_html)
-        .replace("__FEEDS_COUNT__", str(len(FEEDS)))
-        .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
-        .replace("__COIN_META__", json.dumps(COIN_META))
-        .replace("__MODEL_VERSION__", MODEL_VERSION)
-        .replace("__APP_VERSION__", VERSION)
-    )
-    return HTMLResponse(html)
+        if TEMPLATE_PATH.exists():
+            html_template = TEMPLATE_PATH.read_text(encoding="utf-8")
+        else:
+            html_template = """<!doctype html><html><head><meta charset="utf-8"><title>Crypto Intel</title></head><body style="font-family:Arial;background:#0b1220;color:#e5e7eb;padding:16px"><h3>Crypto Intel</h3><p>Dashboard template missing at /app/assets/dashboard_template.html.</p><p>Please rebuild Docker image with assets copied (Dockerfile now includes <code>COPY assets /app/assets</code>).</p><h4>Predictions</h4>__PREDS_HTML__</body></html>"""
+
+        html = (
+            html_template.replace("__ALERTS_SECTIONS__", alerts_sections)
+            .replace("__NEWS_HTML__", news_html)
+            .replace("__PREDS_HTML__", preds_html)
+            .replace("__FEEDS_COUNT__", str(len(FEEDS)))
+            .replace("__ORDER__", json.dumps(TICKER_SYMBOLS))
+            .replace("__COIN_META__", json.dumps(COIN_META))
+            .replace("__MODEL_VERSION__", MODEL_VERSION)
+            .replace("__APP_VERSION__", VERSION)
+        )
+        return HTMLResponse(html)
+    except Exception as e:
+        fallback = (
+            '<!doctype html><html><head><meta charset="utf-8"><title>Crypto Intel</title></head>'
+            '<body style="font-family:Arial;background:#0b1220;color:#e5e7eb;padding:16px">'
+            '<h3>Crypto Intel</h3><p>Main page recovered from an internal error.</p>'
+            f'<pre style="white-space:pre-wrap">{str(e)}</pre>'
+            '<p>Check container logs and rebuild image if needed.</p></body></html>'
+        )
+        return HTMLResponse(fallback)
 
 
 # =============================================================================
