@@ -308,48 +308,62 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
 
 
 def db_upsert_event(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
-    query = """INSERT OR REPLACE INTO events
-               (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
-               VALUES(?,?,?,?,?,?,?,?,?)"""
-    params = (
-        item["id"],
-        item["nid"],
-        item["coin"],
-        item["ts"],
-        item["title"],
-        item["source_url"],
-        float(item["sentiment"]),
-        float(item["novelty"]),
-        json.dumps(item.get("features", {})),
-    )
+    owns_connection = db is None
     if db is None:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(query, params)
-    else:
-        db.execute(query, params)
+        db = sqlite3.connect(DB_PATH)
+
+    try:
+        db.execute(
+            """INSERT OR REPLACE INTO events
+               (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                item["id"],
+                item["nid"],
+                item["coin"],
+                item["ts"],
+                item["title"],
+                item["source_url"],
+                float(item["sentiment"]),
+                float(item["novelty"]),
+                json.dumps(item.get("features", {})),
+            ),
+        )
+        if owns_connection:
+            db.commit()
+    finally:
+        if owns_connection:
+            db.close()
 
 
 def db_upsert_event_prediction(item: dict, db: Optional[sqlite3.Connection] = None) -> None:
-    query = """INSERT OR REPLACE INTO event_predictions
+    owns_connection = db is None
+    if db is None:
+        db = sqlite3.connect(DB_PATH)
+
+    try:
+        db.execute(
+            """INSERT OR REPLACE INTO event_predictions
                (event_id, horizon_h, ts, model_version, direction, expected_return,
                 probability_up, confidence, reasons)
-               VALUES(?,?,?,?,?,?,?,?,?)"""
-    params = (
-        item["event_id"],
-        int(item["horizon_h"]),
-        item["ts"],
-        item["model_version"],
-        item["direction"],
-        float(item["expected_return"]),
-        float(item["probability_up"]),
-        float(item["confidence"]),
-        json.dumps(item.get("reasons", [])),
-    )
-    if db is None:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(query, params)
-    else:
-        db.execute(query, params)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                item["event_id"],
+                int(item["horizon_h"]),
+                item["ts"],
+                item["model_version"],
+                item["direction"],
+                float(item["expected_return"]),
+                float(item["probability_up"]),
+                float(item["confidence"]),
+                json.dumps(item.get("reasons", [])),
+            ),
+        )
+        if owns_connection:
+            db.commit()
+    finally:
+        if owns_connection:
+            db.close()
 
 
 def db_insert_outcome(item: dict) -> None:
