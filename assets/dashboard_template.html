@@ -119,6 +119,7 @@
         const prob = Math.round((c.probability_up||0.5)*100);
         const move = (c.expected_move_pct>=0?'+':'') + Number(c.expected_move_pct||0).toFixed(2) + '%';
         const reasons = (c.reason_codes||[]).slice(0,3).join(' • ');
+        const sourceLabel = (Number(c.sample_size||0) > 0) ? (c.source_count||0) : 'n/a';
         html += `
           <div class="card pred">
             <div class="row" style="justify-content:space-between">
@@ -129,7 +130,7 @@
               <div class="conf ${conf}">${conf.toUpperCase()}</div>
             </div>
             <div class="meta">Expected move: <b>${move}</b> • P(up): <b>${prob}%</b></div>
-            <div class="meta">Score: <b>${score}</b> • Sources: ${c.source_count||0} • Articles: ${c.sample_size||0}</div>
+            <div class="meta">Score: <b>${score}</b> • Sources: ${sourceLabel} • Articles: ${c.sample_size||0}</div>
             <div class="reasons">${reasons || 'model inference'}</div>
           </div>`;
       }

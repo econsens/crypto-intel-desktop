@@ -1328,8 +1328,14 @@ def predictions_api(window_hours: int = 48):
                 "SELECT COUNT(DISTINCT source) FROM sentiments WHERE coin=? AND ts>=?",
                 (coin, since),
             ).fetchone()
+            event_src_rows = db.execute(
+                "SELECT COUNT(DISTINCT source_url) FROM events WHERE coin=? AND ts>=?",
+                (coin, since),
+            ).fetchone()
             sample = len(rows)
             source_count = int(src_rows[0] or 0) if src_rows else 0
+            event_source_count = int(event_src_rows[0] or 0) if event_src_rows else 0
+            source_count = max(source_count, event_source_count)
 
             if rows:
                 df = pd.DataFrame(rows, columns=["ts", "score"]).set_index("ts")
@@ -1593,6 +1599,7 @@ def home():
                 score = float(c.get("score", 0.0) or 0.0)
                 sample = int(c.get("sample_size", 0) or 0)
                 source_count = int(c.get("source_count", 0) or 0)
+                source_label = str(source_count) if sample > 0 else "n/a"
                 cards.append(
                     f"""
                   <div class="card pred">
@@ -1603,7 +1610,7 @@ def home():
                       </div>
                       <div class="conf {conf_cls}">{conf_cls.capitalize()}</div>
                     </div>
-                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {source_count} • Articles: {sample}</div>
+                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {source_label} • Articles: {sample}</div>
                   </div>
                 """
                 )
