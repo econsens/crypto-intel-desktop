@@ -123,11 +123,17 @@ COIN_META = {
 FEEDS = [
     "https://cointelegraph.com/rss",
     "https://news.bitcoin.com/feed/",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+    "https://bitcoinmagazine.com/.rss/full/",
 ]
 
 SOURCE_WEIGHTS = {
     "cointelegraph.com": 0.64,
     "news.bitcoin.com": 0.58,
+    "www.coindesk.com": 0.67,
+    "decrypt.co": 0.62,
+    "bitcoinmagazine.com": 0.60,
 }
 
 # shared price cache for ticker bar
