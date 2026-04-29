@@ -1324,7 +1324,12 @@ def predictions_api(window_hours: int = 48):
                 "SELECT features FROM events WHERE coin=? AND ts>=? ORDER BY ts DESC LIMIT 60",
                 (coin, since),
             ).fetchall()
+            src_rows = db.execute(
+                "SELECT COUNT(DISTINCT source) FROM sentiments WHERE coin=? AND ts>=?",
+                (coin, since),
+            ).fetchone()
             sample = len(rows)
+            source_count = int(src_rows[0] or 0) if src_rows else 0
 
             if rows:
                 df = pd.DataFrame(rows, columns=["ts", "score"]).set_index("ts")
@@ -1451,6 +1456,7 @@ def predictions_api(window_hours: int = 48):
                     "expected_move_pct": round(pred_val * 100.0, 3),
                     "score": round(pred_val, 4),
                     "sample_size": sample,
+                    "source_count": source_count,
                     "model_version": MODEL_VERSION,
                     "model_quality_score": model_score,
                     "reason_codes": reason_codes[:8],
@@ -1586,6 +1592,7 @@ def home():
                 conf_cls = conf if conf in {"low", "med", "high"} else "low"
                 score = float(c.get("score", 0.0) or 0.0)
                 sample = int(c.get("sample_size", 0) or 0)
+                source_count = int(c.get("source_count", 0) or 0)
                 cards.append(
                     f"""
                   <div class="card pred">
@@ -1596,7 +1603,7 @@ def home():
                       </div>
                       <div class="conf {conf_cls}">{conf_cls.capitalize()}</div>
                     </div>
-                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {sample}</div>
+                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {source_count} • Articles: {sample}</div>
                   </div>
                 """
                 )
