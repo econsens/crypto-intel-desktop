@@ -129,7 +129,7 @@
               <div class="conf ${conf}">${conf.toUpperCase()}</div>
             </div>
             <div class="meta">Expected move: <b>${move}</b> • P(up): <b>${prob}%</b></div>
-            <div class="meta">Score: <b>${score}</b> • Sources: ${c.sample_size||0}</div>
+            <div class="meta">Score: <b>${score}</b> • Sources: ${c.source_count||0} • Articles: ${c.sample_size||0}</div>
             <div class="reasons">${reasons || 'model inference'}</div>
           </div>`;
       }
