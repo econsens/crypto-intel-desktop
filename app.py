@@ -728,7 +728,8 @@ def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, f
             return None
         if not feats:
             feats = ["ema6", "ema24", "cnt", "ret_1h", "ret_6h", "ret_24h", "vol_24h", "topic_bias", "keyword_hits", "source_reliability", "novelty"]
-        x = [[float(feature_map.get(name, 0.0)) for name in feats]]
+        import pandas as pd
+        x = pd.DataFrame([{name: float(feature_map.get(name, 0.0)) for name in feats}], columns=feats)
         yhat = float(mdl.predict(x)[0])
         if math.isfinite(yhat):
             return max(-0.10, min(0.10, yhat))
@@ -801,7 +802,7 @@ def rss_loop():
                     for coin in cs:
                         db.execute(
                             "INSERT OR REPLACE INTO sentiments(nid, coin, ts, score, source) VALUES(?,?,?,?,?)",
-                            (n["id"], coin, n["ts"], float(sent), "finbert" if _FINBERT else "lexicon"),
+                            (n["id"], coin, n["ts"], float(sent), n.get("source") or source_key(n.get("url", ""))),
                         )
 
                         event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
@@ -1422,7 +1423,7 @@ def predictions_api(window_hours: int = 48):
                         mdl = obj
                         feats = ["ema6", "ema24", "cnt"]
 
-                    x = np.array([[feature_map.get(name, 0.0) for name in feats]], dtype=float)
+                    x = pd.DataFrame([{name: float(feature_map.get(name, 0.0)) for name in feats}], columns=feats)
                     yhat = float(mdl.predict(x)[0])
                     if not math.isfinite(yhat):
                         raise ValueError("non-finite yhat")
