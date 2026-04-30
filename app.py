@@ -123,11 +123,17 @@ COIN_META = {
 FEEDS = [
     "https://cointelegraph.com/rss",
     "https://news.bitcoin.com/feed/",
+    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "https://decrypt.co/feed",
+    "https://bitcoinmagazine.com/.rss/full/",
 ]
 
 SOURCE_WEIGHTS = {
     "cointelegraph.com": 0.64,
     "news.bitcoin.com": 0.58,
+    "www.coindesk.com": 0.67,
+    "decrypt.co": 0.62,
+    "bitcoinmagazine.com": 0.60,
 }
 
 # shared price cache for ticker bar
@@ -722,7 +728,8 @@ def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, f
             return None
         if not feats:
             feats = ["ema6", "ema24", "cnt", "ret_1h", "ret_6h", "ret_24h", "vol_24h", "topic_bias", "keyword_hits", "source_reliability", "novelty"]
-        x = [[float(feature_map.get(name, 0.0)) for name in feats]]
+        import pandas as pd
+        x = pd.DataFrame([{name: float(feature_map.get(name, 0.0)) for name in feats}], columns=feats)
         yhat = float(mdl.predict(x)[0])
         if math.isfinite(yhat):
             return max(-0.10, min(0.10, yhat))
@@ -795,7 +802,7 @@ def rss_loop():
                     for coin in cs:
                         db.execute(
                             "INSERT OR REPLACE INTO sentiments(nid, coin, ts, score, source) VALUES(?,?,?,?,?)",
-                            (n["id"], coin, n["ts"], float(sent), "finbert" if _FINBERT else "lexicon"),
+                            (n["id"], coin, n["ts"], float(sent), n.get("source") or source_key(n.get("url", ""))),
                         )
 
                         event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
@@ -1318,7 +1325,18 @@ def predictions_api(window_hours: int = 48):
                 "SELECT features FROM events WHERE coin=? AND ts>=? ORDER BY ts DESC LIMIT 60",
                 (coin, since),
             ).fetchall()
+            src_rows = db.execute(
+                "SELECT COUNT(DISTINCT source) FROM sentiments WHERE coin=? AND ts>=?",
+                (coin, since),
+            ).fetchone()
+            event_src_rows = db.execute(
+                "SELECT COUNT(DISTINCT source_url) FROM events WHERE coin=? AND ts>=?",
+                (coin, since),
+            ).fetchone()
             sample = len(rows)
+            source_count = int(src_rows[0] or 0) if src_rows else 0
+            event_source_count = int(event_src_rows[0] or 0) if event_src_rows else 0
+            source_count = max(source_count, event_source_count)
 
             if rows:
                 df = pd.DataFrame(rows, columns=["ts", "score"]).set_index("ts")
@@ -1405,7 +1423,7 @@ def predictions_api(window_hours: int = 48):
                         mdl = obj
                         feats = ["ema6", "ema24", "cnt"]
 
-                    x = np.array([[feature_map.get(name, 0.0) for name in feats]], dtype=float)
+                    x = pd.DataFrame([{name: float(feature_map.get(name, 0.0)) for name in feats}], columns=feats)
                     yhat = float(mdl.predict(x)[0])
                     if not math.isfinite(yhat):
                         raise ValueError("non-finite yhat")
@@ -1445,6 +1463,7 @@ def predictions_api(window_hours: int = 48):
                     "expected_move_pct": round(pred_val * 100.0, 3),
                     "score": round(pred_val, 4),
                     "sample_size": sample,
+                    "source_count": source_count,
                     "model_version": MODEL_VERSION,
                     "model_quality_score": model_score,
                     "reason_codes": reason_codes[:8],
@@ -1580,6 +1599,8 @@ def home():
                 conf_cls = conf if conf in {"low", "med", "high"} else "low"
                 score = float(c.get("score", 0.0) or 0.0)
                 sample = int(c.get("sample_size", 0) or 0)
+                source_count = int(c.get("source_count", 0) or 0)
+                source_label = str(source_count) if sample > 0 else "n/a"
                 cards.append(
                     f"""
                   <div class="card pred">
@@ -1590,7 +1611,7 @@ def home():
                       </div>
                       <div class="conf {conf_cls}">{conf_cls.capitalize()}</div>
                     </div>
-                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {sample}</div>
+                    <div class="meta">Score: <b>{score:+.3f}</b> • Sources: {source_label} • Articles: {sample}</div>
                   </div>
                 """
                 )
