@@ -888,6 +888,12 @@ def rss_loop():
                         time.sleep(0.2)
                         continue
                     raise
+                except Exception as e:
+                    if "database is locked" in str(e).lower():
+                        print("RSS item skipped due to non-sqlite lock error:", n.get("title", "")[:80])
+                        time.sleep(0.2)
+                        continue
+                    raise
 
         except Exception as e:
             print("RSS loop error:", e)
