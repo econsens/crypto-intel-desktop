@@ -417,6 +417,19 @@ def coins_in_title(title: str) -> List[str]:
     for sym in ("BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "MATIC", "DOT", "AVAX", "LINK", "TON"):
         if f" {sym.lower()} " in t or sym in title:
             found.add(sym)
+    if not found:
+        market_wide_terms = (
+            "crypto",
+            "cryptocurrency",
+            "digital asset",
+            "tokenized",
+            "defi",
+            "stablecoin",
+            "etf",
+            "exchange",
+        )
+        if any(term in t for term in market_wide_terms):
+            found.update({"BTC", "ETH"})
     return sorted(found)
 
 
