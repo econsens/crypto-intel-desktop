@@ -815,20 +815,21 @@ def rss_loop():
     while True:
         try:
             for n in fetch_rss_once():
-                db_add_news(n)
-                cs = coins_in_title(n["title"])
-                if not cs:
-                    continue
+                try:
+                    db_add_news(n)
+                    cs = coins_in_title(n["title"])
+                    if not cs:
+                        continue
 
-                sent = signed_sentiment(n["title"])
-                for coin in cs:
-                    db_upsert_sentiment(
-                        n["id"],
-                        coin,
-                        n["ts"],
-                        float(sent),
-                        n.get("source") or source_key(n.get("url", "")),
-                    )
+                    sent = signed_sentiment(n["title"])
+                    for coin in cs:
+                        db_upsert_sentiment(
+                            n["id"],
+                            coin,
+                            n["ts"],
+                            float(sent),
+                            n.get("source") or source_key(n.get("url", "")),
+                        )
 
                     event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
                     pred = build_event_prediction(coin, sent, n["title"], n["ts"], n["url"])
@@ -876,11 +877,17 @@ def rss_loop():
                             }
                         )
 
-                try:
-                    if MEM is not None:
-                        MEM.add_or_skip(n["id"], n["title"], n["ts"], cs)
-                except Exception as me:
-                    print("Memory add error (headline):", me)
+                    try:
+                        if MEM is not None:
+                            MEM.add_or_skip(n["id"], n["title"], n["ts"], cs)
+                    except Exception as me:
+                        print("Memory add error (headline):", me)
+                except sqlite3.OperationalError as oe:
+                    if "locked" in str(oe).lower():
+                        print("RSS item skipped due to DB lock:", n.get("title", "")[:80])
+                        time.sleep(0.2)
+                        continue
+                    raise
 
         except Exception as e:
             print("RSS loop error:", e)
