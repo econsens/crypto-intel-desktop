@@ -146,7 +146,9 @@ EVENT_HORIZONS = [1, 4, 24]
 # =============================================================================
 def db_init() -> None:
     """Create required tables if they don't exist."""
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA busy_timeout=30000")
         db.execute("""CREATE TABLE IF NOT EXISTS news(
             id TEXT PRIMARY KEY,
             title TEXT,
@@ -262,7 +264,7 @@ def db_init() -> None:
 def save_metric(kind: str, ts: str, coin: str, payload: dict) -> None:
     """Insert one metric row; errors are swallowed."""
     try:
-        with sqlite3.connect(DB_PATH) as db:
+        with sqlite3.connect(DB_PATH, timeout=30) as db:
             db.execute(
                 "INSERT INTO ml_metrics(ts, kind, coin, payload) VALUES(?,?,?,?)",
                 (ts, kind, coin, json.dumps(payload)),
@@ -272,7 +274,7 @@ def save_metric(kind: str, ts: str, coin: str, payload: dict) -> None:
 
 
 def db_add_news(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         db.execute(
             "INSERT OR REPLACE INTO news VALUES(?,?,?,?)",
             (item["id"], item["title"], item["url"], item["ts"]),
@@ -280,14 +282,14 @@ def db_add_news(item: dict) -> None:
 
 
 def db_get_news(limit: int = 50) -> List[dict]:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         cur = db.execute("SELECT * FROM news ORDER BY ts DESC LIMIT ?", (limit,))
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 def db_add_alert(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         db.execute(
             "INSERT OR REPLACE INTO alerts VALUES(?,?,?,?,?,?,?,?)",
             (
@@ -304,7 +306,7 @@ def db_add_alert(item: dict) -> None:
 
 
 def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> List[dict]:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         cur = db.execute(
             "SELECT * FROM alerts WHERE ts>=? AND ts<? ORDER BY ts DESC LIMIT ?",
             (start_iso, end_iso, limit),
@@ -314,7 +316,7 @@ def db_get_alerts_between(start_iso: str, end_iso: str, limit: int = 200) -> Lis
 
 
 def db_upsert_event(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         db.execute(
             """INSERT OR REPLACE INTO events
                (id, nid, coin, ts, title, source_url, sentiment, novelty, features)
@@ -334,7 +336,7 @@ def db_upsert_event(item: dict) -> None:
 
 
 def db_upsert_event_prediction(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         db.execute(
             """INSERT OR REPLACE INTO event_predictions
                (event_id, horizon_h, ts, model_version, direction, expected_return,
@@ -355,7 +357,7 @@ def db_upsert_event_prediction(item: dict) -> None:
 
 
 def db_insert_outcome(item: dict) -> None:
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         db.execute(
             """INSERT OR REPLACE INTO event_outcomes
                (event_id, horizon_h, resolved_at, entry_price, exit_price, realized_return, hit)
@@ -583,7 +585,7 @@ def estimate_novelty(title: str) -> float:
             pass
 
     try:
-        with sqlite3.connect(DB_PATH) as db:
+        with sqlite3.connect(DB_PATH, timeout=30) as db:
             row = db.execute(
                 "SELECT title FROM news ORDER BY ts DESC LIMIT 200"
             ).fetchall()
@@ -713,7 +715,7 @@ def build_event_prediction(coin: str, sentiment: float, title: str, ts: str, sou
 
 def predict_horizon_expected(coin: str, horizon_h: int, feature_map: Dict[str, float]) -> Optional[float]:
     try:
-        with sqlite3.connect(DB_PATH) as db:
+        with sqlite3.connect(DB_PATH, timeout=30) as db:
             row = db.execute(
                 "SELECT path FROM models_horizon WHERE coin=? AND horizon_hours=?",
                 (coin, int(horizon_h)),
@@ -798,7 +800,7 @@ def rss_loop():
                     continue
 
                 sent = signed_sentiment(n["title"])
-                with sqlite3.connect(DB_PATH) as db:
+                with sqlite3.connect(DB_PATH, timeout=30) as db:
                     for coin in cs:
                         db.execute(
                             "INSERT OR REPLACE INTO sentiments(nid, coin, ts, score, source) VALUES(?,?,?,?,?)",
@@ -867,7 +869,7 @@ def alert_generation_loop() -> None:
     """Generate alerts from event predictions instead of random placeholders."""
     while True:
         try:
-            with sqlite3.connect(DB_PATH) as db:
+            with sqlite3.connect(DB_PATH, timeout=30) as db:
                 rows = db.execute(
                     """
                     SELECT e.id, e.title, e.source_url, e.coin, e.ts, e.features,
@@ -924,7 +926,7 @@ def outcome_resolution_loop() -> None:
     while True:
         try:
             now = datetime.now(timezone.utc)
-            with sqlite3.connect(DB_PATH) as db:
+            with sqlite3.connect(DB_PATH, timeout=30) as db:
                 rows = db.execute(
                     """
                     SELECT p.event_id, p.horizon_h, p.direction, e.coin, e.ts
@@ -1038,7 +1040,7 @@ def daily_trainer_loop() -> None:
                     dfp["vol_24h"] = dfp["ret_1h"].rolling(24, min_periods=3).std().fillna(0.0)
 
                     since_iso = dfp.index.min().isoformat()
-                    with sqlite3.connect(DB_PATH) as db:
+                    with sqlite3.connect(DB_PATH, timeout=30) as db:
                         srows = db.execute(
                             "SELECT ts, score FROM sentiments WHERE coin=? AND ts>=? ORDER BY ts ASC",
                             (coin, since_iso),
@@ -1125,7 +1127,7 @@ def daily_trainer_loop() -> None:
                         with open(art["path"], "wb") as f:
                             pickle.dump({"model": mdl, "features": feats, "version": MODEL_VERSION}, f)
 
-                        with sqlite3.connect(DB_PATH) as db:
+                        with sqlite3.connect(DB_PATH, timeout=30) as db:
                             db.execute(
                                 """INSERT OR REPLACE INTO models_horizon
                                    (coin, horizon_hours, trained_at, n_samples, quality_score, path)
@@ -1209,7 +1211,7 @@ def version():
 
 @app.get("/debug/metrics")
 def debug_metrics(limit: int = 200):
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         cur = db.execute(
             "SELECT ts, kind, coin, payload FROM ml_metrics ORDER BY id DESC LIMIT ?",
             (limit,),
@@ -1272,7 +1274,7 @@ def debug_routes():
 
 @app.get("/debug/model-quality")
 def model_quality(limit: int = 120):
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         rows = db.execute(
             """
             SELECT ts, coin, model_version, horizon_h, n_test, direction_acc, mae, baseline_acc
@@ -1314,7 +1316,7 @@ def predictions_api(window_hours: int = 48):
     since = (now - timedelta(hours=window_hours)).isoformat()
 
     out = []
-    with sqlite3.connect(DB_PATH) as db:
+    with sqlite3.connect(DB_PATH, timeout=30) as db:
         for full in TICKER_SYMBOLS:
             coin = full.replace("USDT", "")
             rows = db.execute(
