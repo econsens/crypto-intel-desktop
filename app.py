@@ -831,51 +831,51 @@ def rss_loop():
                             n.get("source") or source_key(n.get("url", "")),
                         )
 
-                        event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
-                        pred = build_event_prediction(coin, sent, n["title"], n["ts"], n["url"])
-                        db_upsert_event(
+                    event_id = normalize_id(f"{n['id']}:{coin}", n["ts"])
+                    pred = build_event_prediction(coin, sent, n["title"], n["ts"], n["url"])
+                    db_upsert_event(
+                        {
+                            "id": event_id,
+                            "nid": n["id"],
+                            "coin": coin,
+                            "ts": n["ts"],
+                            "title": n["title"],
+                            "source_url": n["url"],
+                            "sentiment": sent,
+                            "novelty": pred["feature_map"].get("novelty", 0.5),
+                            "features": pred["feature_map"],
+                        }
+                    )
+                    for h in EVENT_HORIZONS:
+                        expected_h = predict_horizon_expected(
+                            coin,
+                            h,
                             {
-                                "id": event_id,
-                                "nid": n["id"],
-                                "coin": coin,
+                                **pred["feature_map"],
+                                "ema6": sent,
+                                "ema24": sent,
+                                "cnt": 1.0,
+                                "ret_1h": 0.0,
+                                "ret_6h": 0.0,
+                                "ret_24h": 0.0,
+                                "vol_24h": 0.0,
+                            },
+                        )
+                        expected_h = expected_h if expected_h is not None else pred["expected_return"] * (h / 24.0)
+                        prob_up_h = logistic(expected_h * 35.0)
+                        db_upsert_event_prediction(
+                            {
+                                "event_id": event_id,
+                                "horizon_h": h,
                                 "ts": n["ts"],
-                                "title": n["title"],
-                                "source_url": n["url"],
-                                "sentiment": sent,
-                                "novelty": pred["feature_map"].get("novelty", 0.5),
-                                "features": pred["feature_map"],
+                                "model_version": MODEL_VERSION,
+                                "direction": "up" if expected_h >= 0 else "down",
+                                "expected_return": expected_h,
+                                "probability_up": prob_up_h,
+                                "confidence": pred["confidence"],
+                                "reasons": pred["reasons"] + [f"horizon={h}h"],
                             }
                         )
-                        for h in EVENT_HORIZONS:
-                            expected_h = predict_horizon_expected(
-                                coin,
-                                h,
-                                {
-                                    **pred["feature_map"],
-                                    "ema6": sent,
-                                    "ema24": sent,
-                                    "cnt": 1.0,
-                                    "ret_1h": 0.0,
-                                    "ret_6h": 0.0,
-                                    "ret_24h": 0.0,
-                                    "vol_24h": 0.0,
-                                },
-                            )
-                            expected_h = expected_h if expected_h is not None else pred["expected_return"] * (h / 24.0)
-                            prob_up_h = logistic(expected_h * 35.0)
-                            db_upsert_event_prediction(
-                                {
-                                    "event_id": event_id,
-                                    "horizon_h": h,
-                                    "ts": n["ts"],
-                                    "model_version": MODEL_VERSION,
-                                    "direction": "up" if expected_h >= 0 else "down",
-                                    "expected_return": expected_h,
-                                    "probability_up": prob_up_h,
-                                    "confidence": pred["confidence"],
-                                    "reasons": pred["reasons"] + [f"horizon={h}h"],
-                                }
-                            )
 
                     try:
                         if MEM is not None:
