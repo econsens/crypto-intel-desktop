@@ -882,7 +882,7 @@ def rss_loop():
                             MEM.add_or_skip(n["id"], n["title"], n["ts"], cs)
                     except Exception as me:
                         print("Memory add error (headline):", me)
-                except sqlite3.OperationalError as oe:
+                except sqlite3.Error as oe:
                     if "locked" in str(oe).lower():
                         print("RSS item skipped due to DB lock:", n.get("title", "")[:80])
                         time.sleep(0.2)
